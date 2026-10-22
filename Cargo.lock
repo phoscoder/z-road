@@ -502,6 +502,7 @@ dependencies = [
  "tempfile",
  "timestamp-service",
  "tokio",
+ "tokio-rustls",
  "zroad-client",
  "zroad-core",
  "zroad-net",

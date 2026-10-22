@@ -59,12 +59,43 @@ code.
 `POST /v1/renew {csr_pem}` on the central server over mutual TLS. The central
 server checks that the presented certificate is the one registered for an
 `active` member, then issues a new one for the same member id and endpoint host
-and updates the directory. Peers stop accepting the old certificate as soon as
-they refresh their directory (the fingerprint no longer matches), even though it
-is still signed by the CA and unexpired. A security server does this by itself when fewer than
-`renew_before_days` (default 30) remain, and swaps the new certificate in without
-a restart (`POST /admin/v1/renew` does it on demand). A member whose certificate has already
+and updates the directory. The certificate it replaces is kept in the member's
+`previous_certs` (newest first, at most ten). A member whose certificate has already
 expired must be re-registered and re-enrolled with a new token.
+
+Renewal is automatic everywhere a key lives: a security server renews its own
+certificate, a node renews its node identity, a signer service renews its member's
+key (`--central`), the timestamp authority renews itself (`--central`), and the
+central server re-issues its own TLS certificate locally from the CA it holds. All
+use `renew_before_days` (default 30) and switch to the new certificate **without a
+restart**. `POST /admin/v1/renew` renews a security server on demand.
+
+**Rotating without interrupting traffic.** A new certificate is not usable until
+every other member has learned it, and directory copies lag by up to their refresh
+interval. So rotation has two phases:
+
+1. *Renew and wait.* The member obtains the new certificate (the directory now lists
+   it as current and the old one as previous), writes it to disk, and **keeps using
+   the old one** for `rotation_activation_secs` (default: twice the directory refresh
+   interval plus five seconds, i.e. 65 s). Peers that refresh see the new
+   certificate; peers that have not yet still see the old one as current.
+2. *Switch.* After the delay it starts presenting the new certificate and signing with
+   the new key.
+
+Providers and consumers accept **the previous certificate or key for
+`rotation_grace_secs` (default 600) after the current one was issued**: the TLS
+client certificate of a peer, the signature key of a hosted member, a provider's
+response signature, and the timestamp authority's key. After the grace period only
+the current certificate works, so renewal still retires the old key. Setting the grace
+to 0 retires it immediately (and then renewal should not be done under traffic). As a
+safety net, a signature that fails to verify triggers one throttled directory refresh
+and a retry before it is treated as a forgery.
+
+**Old evidence stays verifiable.** Proofs and audit anchors are checked against the
+key the member *had at the time*: `member_keys_at(id, time)` returns the keys, from
+the current certificate and `previous_certs`, whose validity covers that time (with a
+ten-minute slack). A proof made before a rotation therefore still verifies after it,
+and an old key cannot vouch for something dated after it expired.
 
 ## 3a. Hosted members with their own keys
 
@@ -297,8 +328,10 @@ body. Anyone holding the directory can check, offline, that:
 * the response is bound to this request (`request_id`, `request_sha256`);
 * the response was signed by the member that owns the service.
 
-`zroad-cli proof-verify` does this. Note that verification uses the key in the
-*current* directory; see the threat model on certificate rotation.
+`zroad-cli proof-verify` does this. Keys are looked up *as of the time of the
+exchange*, so proofs survive certificate rotations (section 3). The directory must
+still contain the certificates concerned: keep old directory snapshots, and note that
+`previous_certs` keeps ten.
 
 ## 9. Audit log
 
@@ -351,9 +384,8 @@ token is issued so they are never reused.
 
 ## 10. What is not specified yet
 
-* Renewal of the node's own certificate without a restart, and renewal of a hosted member's key (renew on the signer's machine with `zroad-cli renew`, then restart the signer).
+* Rotating the root CA itself (it is valid for ten years; a warning is logged within a year of expiry, and every member would have to be given the new `ca.pem`).
 * Policy in the signer beyond rate limits (for example allowed services).
-* Verifying old proofs after a certificate rotation (the offline check uses the key in the current directory).
 * Federation between several Z-Road instances or with other X-Road deployments.
 * Streaming and large-object transfer (bodies are capped, default 2 MiB).
 * Schemas for non-JSON content types.

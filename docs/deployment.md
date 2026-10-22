@@ -76,6 +76,8 @@ rate_limit_per_sec     = 50      # per calling member
 max_body_bytes         = 2097152
 upstream_timeout_secs  = 15
 outbox_max_attempts    = 20
+rotation_activation_secs = 65     # keep the old certificate this long after renewing (default: 2 x directory refresh + 5)
+rotation_grace_secs    = 600     # peers accept the previous certificate this long after a rotation
 renew_before_days      = 30      # renew the certificate automatically; 0 = off (warns instead)
 
 # a provider lists its services and who may use each one (default deny)
@@ -174,9 +176,9 @@ machine and let the operator's node carry the traffic. The steps:
 
 The signer writes `audit/log.jsonl` with one `signed` entry per signature. Check
 it with `zroad-cli audit-verify --log ./signer/audit/log.jsonl`, and compare it
-with what the node reports. Renew the member's key on the signer's machine
-(`zroad-cli renew`, then restart the signer); the node's own certificate is renewed
-with `zroad-cli renew` on the node identity directory and a restart.
+with what the node reports. Run the signer with `--central https://central.example.zw:8443` and it
+renews the member's key and its own TLS certificate by itself; the node follows the new
+key through the directory. The node renews its own identity automatically too.
 
 ## Calling a service
 
@@ -209,7 +211,7 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 | Revoke a member | `zroad-cli member-revoke …` (final) |
 | See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token <auditor token> --subject 2000123456` (auditor or higher; the lookup is recorded) |
 | Fetch a stored proof | `GET /admin/v1/proofs/<message_id>` |
-| Renew a certificate now | `POST /admin/v1/renew` on a running security server (automatic when under `renew_before_days`). Offline alternative: `zroad-cli renew --central … --dir … --san …`, then restart |
+| Renew a certificate now | `POST /admin/v1/renew` on a running security server (automatic when under `renew_before_days`; it returns once the new certificate is live, after the activation delay). Offline alternative: `zroad-cli renew --central … --dir … --san …`, then restart |
 | See what the network offers | `zroad-cli catalogue --central https://central.example.zw:8443 --ca ca.pem` (add `--schemas` to print the JSON Schemas) |
 | Republish your services now | `POST /admin/v1/catalogue/publish` |
 | Add an operator | `zroad-cli operator-token --name alice --role operator`, add the printed `[[operators]]` entry, restart (central: `central-server operator-add`, no restart) |
@@ -230,5 +232,7 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 * Put the internal listener on a private interface, set `internal_token`.
 * Run the network listener behind a firewall that allows only members' addresses where possible.
 * Give each service a least-privilege upstream credential rather than an open URL.
-* Monitor certificate expiry (certificates are valid for 365 days; security servers renew themselves 30 days out by default; keep an alert on renewal failures in the logs).
+* Renewal is automatic (365-day certificates, renewed 30 days out) for security servers, nodes, signers (`--central`), the timestamp authority (`--central`) and the central server's own certificate. Alert on `cannot renew` / `renewal failed` log lines.
+* The **root CA** is valid for ten years and is not rotated automatically: the central server warns in its log within a year of expiry. Plan a CA rotation then (every member must be given the new `ca.pem`).
+* Rotation tuning (security server config): `renew_before_days` (30), `rotation_activation_secs` (default twice the directory refresh interval plus 5 seconds: how long the old certificate stays in use after renewal so peers can learn the new one) and `rotation_grace_secs` (600: how long peers keep accepting the previous certificate). Keep the grace longer than the activation delay plus the directory refresh interval.
 * Ship audit logs and the directory to append-only storage.

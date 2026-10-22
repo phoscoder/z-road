@@ -24,6 +24,20 @@ use zroad_net::central_client::write_private;
 use zroad_net::server::{self, PeerCert, ServerHandle};
 use zroad_net::tls;
 
+/// How many earlier certificates are kept per member for verifying old proofs.
+const MAX_PREVIOUS_CERTS: usize = 10;
+
+/// Install a new certificate, keeping the one it replaces in the history.
+fn rotate_cert(rec: &mut MemberRecord, new_pem: String) {
+    if let Some(old) = rec.cert_pem.take() {
+        if old != new_pem {
+            rec.previous_certs.insert(0, old);
+            rec.previous_certs.truncate(MAX_PREVIOUS_CERTS);
+        }
+    }
+    rec.cert_pem = Some(new_pem);
+}
+
 const CERT_VALID_DAYS: i64 = 365;
 const CA_VALID_DAYS: i64 = 3650;
 
@@ -40,6 +54,7 @@ struct Stored {
 
 struct App {
     ca: CertAuthority,
+    server_cert: Arc<tls::ReloadableCert>,
     admin_token: String,
     dir: PathBuf,
     audit: AuditLog,
@@ -100,6 +115,11 @@ pub fn list_operators(dir: &Path) -> Result<Vec<OperatorEntry>> {
 
 /// Create a new central server data directory: CA, TLS identity, admin token.
 pub fn init(dir: &Path, sans: &[String]) -> Result<()> {
+    init_with(dir, sans, CERT_VALID_DAYS)
+}
+
+/// Like [`init`] with an explicit validity for the server's own certificate.
+pub fn init_with(dir: &Path, sans: &[String], server_cert_days: i64) -> Result<()> {
     if dir.join("ca.pem").exists() {
         bail!("{} is already initialised", dir.display());
     }
@@ -113,7 +133,7 @@ pub fn init(dir: &Path, sans: &[String]) -> Result<()> {
     let ident = pki::generate_identity(&me, sans).map_err(|e| anyhow!("{e}"))?;
     let cert = new_ca
         .ca
-        .sign_csr(&ident.csr_pem, &me, sans, CERT_VALID_DAYS)
+        .sign_csr(&ident.csr_pem, &me, sans, server_cert_days)
         .map_err(|e| anyhow!("{e}"))?;
     write_private(&dir.join("server.key"), &ident.key_pem)?;
     std::fs::write(dir.join("server.pem"), cert)?;
@@ -129,8 +149,30 @@ fn save(path: &Path, s: &Stored) -> Result<()> {
     Ok(())
 }
 
+/// Tunables for a running central server.
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// Renew the server's own certificate when fewer than this many days remain.
+    pub renew_before_days: i64,
+    /// How often to check.
+    pub check_interval: std::time::Duration,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            renew_before_days: 30,
+            check_interval: std::time::Duration::from_secs(3600),
+        }
+    }
+}
+
 /// Start serving on `addr` (TLS, server authentication only).
 pub async fn spawn(dir: &Path, addr: &str) -> Result<ServerHandle> {
+    spawn_with(dir, addr, Options::default()).await
+}
+
+pub async fn spawn_with(dir: &Path, addr: &str, opts: Options) -> Result<ServerHandle> {
     let read =
         |f: &str| std::fs::read_to_string(dir.join(f)).with_context(|| format!("reading {f}"));
     let ca_pem = read("ca.pem")?;
@@ -138,20 +180,18 @@ pub async fn spawn(dir: &Path, addr: &str) -> Result<ServerHandle> {
     let state: Stored = serde_json::from_str(&read("state.json")?)?;
     let audit = AuditLog::open(&dir.join("audit").join("log.jsonl"))
         .map_err(|e| anyhow!("central audit log is corrupt, refusing to start: {e}"))?;
+    let server_cert = tls::ReloadableCert::new(&read("server.pem")?, &read("server.key")?)?;
     let app = Arc::new(App {
         ca,
+        server_cert: server_cert.clone(),
         dir: dir.to_path_buf(),
         audit,
         admin_token: read("admin_token")?.trim().to_string(),
         state: Mutex::new(state),
         state_path: dir.join("state.json"),
     });
-    let tls_cfg = tls::server_config(
-        &ca_pem,
-        &read("server.pem")?,
-        &read("server.key")?,
-        tls::ClientAuth::Optional,
-    )?;
+    let tls_cfg = tls::server_config_reloadable(&ca_pem, server_cert, tls::ClientAuth::Optional)?;
+    tokio::spawn(renew_loop(Arc::downgrade(&app), opts));
     let router = Router::new()
         .route("/v1/ca", get(get_ca))
         .route("/v1/directory", get(get_directory))
@@ -331,6 +371,7 @@ async fn add_member(
             status: MemberStatus::Pending,
             cert_pem: None,
             hosted_by: req.hosted_by.clone(),
+            previous_certs: Vec::new(),
         }),
     }
     st.token_hashes
@@ -384,7 +425,7 @@ async fn enroll(
         .ca
         .sign_csr(&req.csr_pem, &req.member_id, &[host], CERT_VALID_DAYS)
         .map_err(|e| bad(e.to_string()))?;
-    st.members[idx].cert_pem = Some(cert_pem.clone());
+    rotate_cert(&mut st.members[idx], cert_pem.clone());
     st.members[idx].status = MemberStatus::Active;
     st.token_hashes.remove(&key);
     st.version += 1;
@@ -457,7 +498,7 @@ async fn renew(
         .ca
         .sign_csr(&req.csr_pem, &info.member, &[host], CERT_VALID_DAYS)
         .map_err(|e| bad(e.to_string()))?;
-    st.members[idx].cert_pem = Some(cert_pem.clone());
+    rotate_cert(&mut st.members[idx], cert_pem.clone());
     st.version += 1;
     save(&app.state_path, &st).map_err(internal)?;
     Ok(Json(EnrollResponse {
@@ -570,4 +611,61 @@ async fn publish_catalogue(
     st.catalogue.insert(member.to_string(), entries);
     save(&app.state_path, &st).map_err(internal)?;
     Ok(Json(serde_json::json!({ "published": n })))
+}
+
+/// Keep the server's own certificate fresh. The central server holds the CA key,
+/// so it re-issues its own certificate locally, with the same host names, and swaps
+/// it in without a restart. Ends when the server is dropped.
+async fn renew_loop(app: std::sync::Weak<App>, opts: Options) {
+    loop {
+        let Some(app) = app.upgrade() else { return };
+        match renew_server_cert_if_due(&app, opts.renew_before_days) {
+            Ok(true) => tracing::info!("renewed the central server's own certificate"),
+            Ok(false) => {}
+            Err(e) => tracing::error!("cannot renew the central server's certificate: {e:#}"),
+        }
+        warn_if_ca_expires_soon(&app);
+        drop(app);
+        tokio::time::sleep(opts.check_interval).await;
+    }
+}
+
+fn days_left(not_after: i64) -> i64 {
+    (not_after - (zroad_core::now_ms() / 1000) as i64) / 86_400
+}
+
+fn renew_server_cert_if_due(app: &App, renew_before_days: i64) -> Result<bool> {
+    let current = std::fs::read_to_string(app.dir.join("server.pem"))?;
+    let info = pki::inspect_cert_pem(&current).map_err(|e| anyhow!("{e}"))?;
+    if days_left(info.not_after) >= renew_before_days {
+        return Ok(false);
+    }
+    let sans = pki::cert_sans(&current).map_err(|e| anyhow!("{e}"))?;
+    let me: MemberId = "ZW/SYS/central".parse().map_err(|e| anyhow!("{e}"))?;
+    let ident = pki::generate_identity(&me, &sans).map_err(|e| anyhow!("{e}"))?;
+    let cert = app
+        .ca
+        .sign_csr(&ident.csr_pem, &me, &sans, CERT_VALID_DAYS)
+        .map_err(|e| anyhow!("{e}"))?;
+    // switch the live server first, then persist; the previous files are kept
+    app.server_cert.set(&cert, &ident.key_pem)?;
+    for f in ["server.pem", "server.key"] {
+        let _ = std::fs::rename(app.dir.join(f), app.dir.join(format!("{f}.prev")));
+    }
+    write_private(&app.dir.join("server.key"), &ident.key_pem)?;
+    std::fs::write(app.dir.join("server.pem"), cert)?;
+    Ok(true)
+}
+
+/// The root CA is valid for ten years and cannot be rotated automatically
+/// (every member trusts it directly), so its expiry is something to plan for.
+fn warn_if_ca_expires_soon(app: &App) {
+    if let Ok(info) = pki::inspect_cert_pem(&app.ca.cert_pem) {
+        let d = days_left(info.not_after);
+        if d < 365 {
+            tracing::warn!(
+                "the root CA expires in {d} day(s): plan a CA rotation and redistribute ca.pem"
+            );
+        }
+    }
 }

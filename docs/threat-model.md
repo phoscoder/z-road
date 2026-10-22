@@ -34,7 +34,7 @@ assurance for a production deployment.
 | Threat | Mitigation in this repository | Residual risk |
 | --- | --- | --- |
 | Eavesdropping or tampering in transit | TLS 1.2/1.3 with mutual authentication, certificates from a private CA (`rustls`, `ring`). | Depends on key hygiene. |
-| Impersonating another member | Certificate common name is set by the CA to the member id; the signed `client` must belong to the authenticated peer (`client_mismatch`); the signature key must be the certificate's key. | A stolen private key is a full impersonation until the member is revoked or renews (renewal retires the old key at once for every peer that has refreshed its directory). |
+| Impersonating another member | Certificate common name is set by the CA to the member id; the signed `client` must belong to the authenticated peer (`client_mismatch`); the signature key must be the certificate's key. | A stolen private key is a full impersonation until the member is revoked, or renews **and the grace period ends** (peers keep accepting the previous certificate for `rotation_grace_secs`, default 10 minutes, so rotation does not interrupt traffic; set it to 0 to retire the old key at once, at the cost of brief errors under traffic). |
 | Forged or altered answers | Responses are signed and bound to the request by hash; bodies are hash-checked; end-to-end tests cover swapped bodies, wrong keys and altered payloads. | |
 | Replay | Per-peer message id cache, ±5 minute window, identical retries are idempotent and re-signed. | The cache is rebuilt from the audit log after a restart, so messages answered in the last 15 minutes are refused (`already_processed`) rather than answered again. The stored answer is not kept across restarts, so such a retry must use a new message id. Dedupe state is per security server instance: running several instances behind one endpoint needs a shared store. |
 | Unauthorised access to a service | Default-deny access rules per service, evaluated by the provider on the signed, authenticated identity. Denied requests never reach the internal system. | Access rules live in a config file; there is no review workflow yet. |
@@ -75,14 +75,13 @@ A security server can host several members. Two models, with different trust:
 Residual risk for member-held keys: the node still sees all traffic in clear and
 can drop or delay it; the signer service is a new attack surface and a new
 availability dependency (no signer, no traffic); the signer machine's key is a file
-unless an HSM is used; the node's own certificate is renewed by hand (`zroad-cli
-renew` and a restart); and the signer's policy is limited to ownership, freshness
+unless an HSM is used; and the signer's policy is limited to ownership, freshness
 and a rate limit (no per-service allow-list yet).
 
 ## Known gaps (not yet addressed)
 
 1. HSM or PKCS#11 support for keys, and an offline root CA.
-2. Verifying old proofs after key rotation (a proof is checked against the key in today's directory). Renewal itself is automatic with hot reload; the timestamp authority and central server still need a restart to pick up a renewed certificate.
+2. The root CA is not rotated automatically (ten-year validity; warning within a year of expiry), and the certificate history in the directory is capped at ten per member.
 3. Replay cache shared between several instances of one security server.
 4. A real citizen login integration (the assertion mechanism is built; something must authenticate the citizen and issue assertions), and MFA or SSO for human operators (today: bearer tokens).
 5. Directory integrity beyond TLS to the central server (for example signing directory snapshots).

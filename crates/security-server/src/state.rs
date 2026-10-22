@@ -168,6 +168,8 @@ pub struct AppState {
     pub subject_key: Vec<u8>,
     pub outbox: Outbox,
     pub auth: zroad_core::auth::Authenticator,
+    /// Set when this member's signing key is held by its own signer service.
+    pub remote_signer: Option<Arc<zroad_net::remote_signer::RemoteSigner>>,
     pub citizen_issuers: Vec<zroad_core::citizen::TrustedIssuer>,
     /// This member's own services' schemas, by `subsystem/service/version`.
     pub schemas: HashMap<String, ServiceSchemas>,
@@ -190,6 +192,29 @@ impl AppState {
 
     pub fn set_identity(&self, id: Identity) {
         *self.identity.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(id);
+    }
+
+    /// Sign a protocol message with this member's key. If the key lives in a remote
+    /// signer that has rotated it, the first attempt can fail verification against
+    /// the key we still expect; follow the directory once and try again.
+    pub async fn sign_message<T: serde::Serialize>(
+        &self,
+        domain: &str,
+        value: &T,
+    ) -> zroad_core::Result<zroad_core::msg::SignedMessage> {
+        use zroad_core::msg::SignedMessage;
+        let id = self.identity();
+        match SignedMessage::sign_async(domain, value, id.signer.as_ref()).await {
+            Err(first) if self.remote_signer.is_some() => {
+                self.dir.refresh_throttled(Duration::from_secs(2)).await;
+                crate::node::sync_remote_key(self);
+                let id = self.identity();
+                SignedMessage::sign_async(domain, value, id.signer.as_ref())
+                    .await
+                    .map_err(|_| first)
+            }
+            other => other,
+        }
     }
 
     pub fn own_info(&self) -> Result<pki::CertInfo> {

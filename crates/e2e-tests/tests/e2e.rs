@@ -179,6 +179,8 @@ impl Net {
             "admin_token": admin,
             "directory_refresh_secs": 1,
             "anchor_interval_secs": 0,
+            "rotation_grace_secs": 0,
+            "rotation_activation_secs": 0,
             "services": services,
             "access": access,
         }))
@@ -874,12 +876,9 @@ async fn renewal_without_restart() {
     let _b = net.run(&buyer, false).await;
     let old = RawClient::new(&buyer, &zimra);
     let body = br#"{"tin":"2000123456"}"#;
-    assert_eq!(
-        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
-            .await
-            .0,
-        200
-    );
+    let (st, _, headers) = clearance(&buyer, "ZW/COM/12345678/ap", "2000123456").await;
+    assert_eq!(st, 200);
+    let proof_before_renewal = read_proof(&headers);
     let fp_before = {
         let (_, who) = get_json(
             &buyer.internal("/admin/v1/identity"),
@@ -920,6 +919,21 @@ async fn renewal_without_restart() {
             .0,
         200
     );
+    // A proof made before the rotation still verifies: the directory keeps each
+    // member's earlier certificates and checks the key that was valid at the time.
+    let directory: zroad_core::directory::Directory =
+        serde_json::from_slice(&std::fs::read(buyer.dir.join("directory.json")).unwrap()).unwrap();
+    assert!(
+        directory
+            .get(&"ZW/COM/12345678".parse().unwrap())
+            .unwrap()
+            .previous_certs
+            .len()
+            == 1
+    );
+    directory
+        .verify_proof(&proof_before_renewal)
+        .expect("old proof verifies after both parties rotated");
     // The retired key is refused.
     let (s, v) = old
         .send(&old.envelope(&random_id(), body), body, None)
@@ -1552,6 +1566,7 @@ async fn members_keep_their_own_keys_on_a_shared_node() {
                 member: mid,
                 node: node_id.parse().unwrap(),
                 max_per_minute: 1000,
+                options: Default::default(),
             })
             .await
             .unwrap(),
@@ -2372,4 +2387,281 @@ async fn central_server_operators_have_roles() {
         );
     }
     audit::verify_file(&cdir.join("audit/log.jsonl")).unwrap();
+}
+
+/// What certificate does a TLS server actually present?
+async fn served_cert(addr: std::net::SocketAddr, ca_pem: &str) -> zroad_core::pki::CertInfo {
+    let cfg = tls::client_config(ca_pem, None).unwrap();
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let name = rustls::pki_types::ServerName::try_from("127.0.0.1".to_string()).unwrap();
+    let stream = tokio_rustls::TlsConnector::from(cfg)
+        .connect(name, tcp)
+        .await
+        .unwrap();
+    let der = stream.get_ref().1.peer_certificates().unwrap()[0]
+        .as_ref()
+        .to_vec();
+    pki::inspect_cert_der(&der).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn central_server_renews_its_own_certificate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cdir = tmp.path().join("central");
+    // a server certificate that is already inside the renewal window
+    central_server::init_with(&cdir, &["127.0.0.1".to_string()], 2).unwrap();
+    let original =
+        pki::inspect_cert_pem(&std::fs::read_to_string(cdir.join("server.pem")).unwrap()).unwrap();
+    let ca = std::fs::read_to_string(cdir.join("ca.pem")).unwrap();
+    let h = central_server::spawn_with(
+        &cdir,
+        "127.0.0.1:0",
+        central_server::Options {
+            renew_before_days: 30,
+            check_interval: Duration::from_millis(200),
+        },
+    )
+    .await
+    .unwrap();
+
+    // The running server switches to a fresh certificate without a restart, and
+    // clients that trust the CA keep working throughout.
+    let mut now = served_cert(h.addr, &ca).await;
+    for _ in 0..50 {
+        if now.fingerprint != original.fingerprint {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        now = served_cert(h.addr, &ca).await;
+    }
+    assert_ne!(
+        now.fingerprint, original.fingerprint,
+        "certificate was replaced"
+    );
+    assert!(
+        now.not_after - zroad_core::now_ms() as i64 / 1000 > 300 * 86_400,
+        "fresh certificate is long-lived"
+    );
+    assert_eq!(now.member.to_string(), "ZW/SYS/central");
+    assert!(cdir.join("server.pem.prev").exists());
+    let client = CentralClient::new(&format!("https://{}", h.addr), &ca).unwrap();
+    assert!(client.directory().await.is_ok());
+    // the host names carried over
+    let sans = pki::cert_sans(&std::fs::read_to_string(cdir.join("server.pem")).unwrap()).unwrap();
+    assert_eq!(sans, vec!["127.0.0.1".to_string()]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timestamp_authority_renews_and_old_anchors_stay_verifiable() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+
+    // A second timestamp authority that renews itself two seconds after starting.
+    let (tsa_id, tsa_port) = ("ZW/SYS/tsa2", free_port());
+    let tsa_dir = net.tmp.path().join("tsa2");
+    net.register(tsa_id, &format!("https://127.0.0.1:{tsa_port}"), &tsa_dir)
+        .await;
+    let _tsa = timestamp_service::spawn_with(
+        &tsa_dir,
+        &format!("127.0.0.1:{tsa_port}"),
+        timestamp_service::Options {
+            central_url: Some(net.central_url.clone()),
+            renew_before_days: 400,
+            check_interval: Duration::from_secs(3600),
+            initial_delay: Duration::from_secs(2),
+            activation_delay: Duration::ZERO,
+        },
+    )
+    .await
+    .unwrap();
+    let original_key = std::fs::read_to_string(tsa_dir.join("key.pem")).unwrap();
+
+    let mut cfg = net.config(&zimra, true);
+    cfg.tsa_member = tsa_id.parse().unwrap();
+    let _z = security_server::spawn(cfg).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await; // learn about the new authority
+    let auth = format!("Bearer {ADMIN}");
+    let anchor = || async {
+        zroad_net::request(
+            "POST",
+            &zimra.internal("/admin/v1/anchor"),
+            &[("authorization", &auth)],
+            Bytes::new(),
+            None,
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap()
+    };
+    assert_eq!(anchor().await.status, 200);
+
+    // After it has renewed itself (new key, no restart) the authority keeps working.
+    for _ in 0..60 {
+        if std::fs::read_to_string(tsa_dir.join("key.pem")).unwrap() != original_key {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_ne!(
+        std::fs::read_to_string(tsa_dir.join("key.pem")).unwrap(),
+        original_key,
+        "authority rotated its key"
+    );
+    let r = anchor().await;
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+
+    // Both anchors verify against the directory, each with the key valid when it was
+    // issued, even though the authority's current key is a different one.
+    let report = audit::verify_file(&zimra.dir.join("audit/log.jsonl")).unwrap();
+    let anchors: Vec<_> = report
+        .anchors
+        .iter()
+        .filter(|(_, t)| t.tsa.to_string() == tsa_id)
+        .collect();
+    assert_eq!(anchors.len(), 2, "{anchors:?}");
+    let directory: zroad_core::directory::Directory =
+        serde_json::from_slice(&std::fs::read(zimra.dir.join("directory.json")).unwrap()).unwrap();
+    let rec = directory.get(&tsa_id.parse().unwrap()).unwrap();
+    assert_eq!(rec.previous_certs.len(), 1);
+    for (_, token) in &anchors {
+        directory
+            .verify_timestamp(token)
+            .expect("anchor verifies across the rotation");
+    }
+    assert_ne!(anchors[0].1.signature_b64, anchors[1].1.signature_b64);
+}
+
+/// A node and a hosted member (with its key in a signer service) both renew
+/// themselves while traffic is flowing. Nothing is restarted.
+#[tokio::test(flavor = "multi_thread")]
+async fn node_and_hosted_member_renew_under_traffic() {
+    use security_server::config::{NodeIdentityConfig, RemoteSignerConfig};
+    let net = Net::start().await;
+    let node_id = "ZW/NODE/acme-hosting";
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let mut zcfg = net.config_with(&zimra, true, ADMIN, &["ZW/COM/11111111"]);
+    zcfg.rotation_grace_secs = 600; // seamless rotation for peers
+    let _z = security_server::spawn(zcfg).await.unwrap();
+
+    let (node_net, node_int) = (free_port(), free_port());
+    let node_dir = net.tmp.path().join("node-identity");
+    net.register(node_id, &format!("https://127.0.0.1:{node_net}"), &node_dir)
+        .await;
+
+    let central = CentralClient::new(&net.central_url, &net.ca_pem).unwrap();
+    let mid: MemberId = "ZW/COM/11111111".parse().unwrap();
+    let tok = central
+        .add_hosted_member(&net.admin_token, &mid, "Acme", &node_id.parse().unwrap())
+        .await
+        .unwrap();
+    let signer_dir = net.tmp.path().join("signer-acme");
+    enroll_to_dir(
+        &net.central_url,
+        &net.ca_pem,
+        &mid,
+        &tok.enrollment_token,
+        &["127.0.0.1".into()],
+        &signer_dir,
+    )
+    .await
+    .unwrap();
+    signer_service::init(&signer_dir, &["127.0.0.1".to_string()]).unwrap();
+    let signer_port = free_port();
+    let _signer = signer_service::spawn(signer_service::SignerConfig {
+        dir: signer_dir.clone(),
+        listen: format!("127.0.0.1:{signer_port}"),
+        member: mid.clone(),
+        node: node_id.parse().unwrap(),
+        max_per_minute: 100_000,
+        options: signer_service::Options {
+            central_url: Some(net.central_url.clone()),
+            renew_before_days: 400,
+            check_interval: Duration::from_secs(3600),
+            initial_delay: Duration::from_secs(5), // the member rotates its key at ~5s
+            activation_delay: Duration::from_secs(2),
+        },
+    })
+    .await
+    .unwrap();
+    let data = net.tmp.path().join("node-acme");
+    std::fs::create_dir_all(&data).unwrap();
+    for f in ["cert.pem", "ca.pem"] {
+        std::fs::copy(signer_dir.join(f), data.join(f)).unwrap();
+    }
+    let a = Member {
+        id: "ZW/COM/11111111",
+        net_port: node_net,
+        int_port: node_int,
+        dir: data,
+    };
+    let mut cfg = net.config_with(&a, false, "admin-token-a-0123456789", &[]);
+    cfg.remote_signer = Some(RemoteSignerConfig {
+        url: format!("https://127.0.0.1:{signer_port}"),
+        ca_file: signer_dir.join("signer-ca.pem"),
+    });
+    cfg.node_identity_dir = Some(node_dir.clone());
+    cfg.renew_before_days = 400; // the node renews its own identity ...
+    cfg.renew_initial_delay_secs = 3; // ... at ~3s
+    cfg.rotation_grace_secs = 600;
+    cfg.rotation_activation_secs = Some(2); // old certificate stays in use 2s after renewal
+    let node = security_server::spawn_node(security_server::config::NodeConfig {
+        members: vec![cfg],
+        node_dir: net.tmp.path().join("node"),
+        node_identity: Some(NodeIdentityConfig {
+            member: node_id.parse().unwrap(),
+            dir: node_dir.clone(),
+        }),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(2500)).await; // everyone learns about the node
+
+    let url = a.internal(&format!("/m/{}{SERVICE_PATH}", a.id));
+    let call = || {
+        let url = url.clone();
+        async move {
+            post_json(
+                &url,
+                &[
+                    ("z-road-client", "ZW/COM/11111111/ap"),
+                    ("z-road-subject", "2000123456"),
+                ],
+                &json!({ "tin": "2000123456" }),
+            )
+            .await
+        }
+    };
+    let (s, v, headers) = call().await;
+    assert_eq!((s, v["status"].as_str().unwrap()), (200, "VALID"), "{v}");
+    let proof_before = read_proof(&headers);
+
+    // Keep calling for twelve seconds while the node (~3s) and the member (~5s) rotate.
+    let mut results = Vec::new();
+    for _ in 0..40 {
+        let (s, v, _) = call().await;
+        results.push((s, v["error"].as_str().unwrap_or("").to_string()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let failures: Vec<_> = results.iter().filter(|(s, _)| *s != 200).collect();
+    assert!(
+        failures.is_empty(),
+        "traffic was interrupted by renewal: {failures:?}"
+    );
+
+    // Both really rotated: new certificates in the directory, history kept, old
+    // files kept, and a proof made before the rotation still verifies.
+    let directory = central.directory().await.unwrap();
+    for id in [node_id, "ZW/COM/11111111"] {
+        let rec = directory.get(&id.parse().unwrap()).unwrap();
+        assert_eq!(rec.previous_certs.len(), 1, "{id} rotated once");
+    }
+    assert!(node_dir.join("key.pem.prev").exists() && signer_dir.join("key.pem.prev").exists());
+    directory
+        .verify_proof(&proof_before)
+        .expect("old proof verifies after both rotations");
+    // and the new keys are the ones in use
+    let (s, v, headers) = call().await;
+    assert_eq!(s, 200, "{v}");
+    directory.verify_proof(&read_proof(&headers)).unwrap();
+    node.shutdown();
 }

@@ -187,12 +187,23 @@ fn peek_client_member(msg: &SignedMessage) -> Option<zroad_core::id::MemberId> {
 /// * A node speaking for a member it hosts: the hosted member's registered key
 ///   (which the node does not hold), and only if the directory says that node
 ///   hosts it.
-async fn speaker_key(
+fn open_with_any(msg: &SignedMessage, keys: &[Vec<u8>]) -> Result<RequestEnvelope, String> {
+    let mut last = "no key to verify with".to_string();
+    for key in keys {
+        match msg.open::<RequestEnvelope>(REQUEST_DOMAIN, key) {
+            Ok(env) => return Ok(env),
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(last)
+}
+
+async fn speaker_keys(
     st: &AppState,
     transport: &zroad_core::id::MemberId,
     info: &pki::CertInfo,
     claimed: &zroad_core::id::MemberId,
-) -> Result<Vec<u8>, Reject> {
+) -> Result<Vec<Vec<u8>>, Reject> {
     use StatusCode as S;
     let lookup = |st: &AppState| st.dir.snapshot().get_active(claimed).cloned();
     let mut rec = lookup(st);
@@ -210,7 +221,7 @@ async fn speaker_key(
                 "this member is hosted; its traffic must come through its node",
             ));
         }
-        return Ok(info.public_key.clone());
+        return Ok(vec![info.public_key.clone()]);
     }
     let rec = rec
         .filter(|r| r.hosted_by.as_ref() == Some(transport))
@@ -221,17 +232,18 @@ async fn speaker_key(
                 "the authenticated peer is not allowed to speak for that member",
             )
         })?;
-    rec.cert_pem
-        .as_deref()
-        .and_then(|pem| pki::inspect_cert_pem(pem).ok())
-        .map(|c| c.public_key)
-        .ok_or_else(|| {
-            reject(
-                S::FORBIDDEN,
-                "client_mismatch",
-                "that member has no usable certificate",
-            )
-        })
+    let keys = st
+        .dir
+        .snapshot()
+        .recent_keys(&rec.id, now_ms(), st.cfg.rotation_grace_secs * 1000);
+    if keys.is_empty() {
+        return Err(reject(
+            S::FORBIDDEN,
+            "client_mismatch",
+            "that member has no usable certificate",
+        ));
+    }
+    Ok(keys)
 }
 
 fn rate_limited(st: &AppState, member: &str) -> bool {
@@ -249,14 +261,38 @@ fn rate_limited(st: &AppState, member: &str) -> bool {
 }
 
 /// Is `info` an active member whose registered certificate is the one presented?
+///
+/// Right after a member renews, other members' directory copies lag behind, so the
+/// certificate it replaced is also accepted for `rotation_grace_secs` (and only if
+/// it is the one immediately before the current one). After that, only the
+/// current certificate works: renewal retires the old key.
 fn is_active_peer(st: &AppState, info: &pki::CertInfo) -> bool {
-    st.dir
-        .snapshot()
-        .get_active(&info.member)
-        .and_then(|m| m.cert_pem.as_deref())
+    let dir = st.dir.snapshot();
+    let Some(rec) = dir.get_active(&info.member) else {
+        return false;
+    };
+    let Some(current) = rec
+        .cert_pem
+        .as_deref()
         .and_then(|pem| pki::inspect_cert_pem(pem).ok())
-        .map(|c| c.fingerprint == info.fingerprint)
-        .unwrap_or(false)
+    else {
+        return false;
+    };
+    if current.fingerprint == info.fingerprint {
+        return true;
+    }
+    let grace_ms = st.cfg.rotation_grace_secs * 1000;
+    if grace_ms == 0 {
+        return false;
+    }
+    // certificates are backdated five minutes, so issue time is not_before + 5 min
+    let issued_ms = current.not_before.max(0) as u64 * 1000 + 5 * 60 * 1000;
+    now_ms() < issued_ms + grace_ms
+        && rec
+            .previous_certs
+            .first()
+            .and_then(|pem| pki::inspect_cert_pem(pem).ok())
+            .is_some_and(|prev| prev.fingerprint == info.fingerprint)
 }
 
 async fn process(
@@ -320,11 +356,23 @@ async fn process(
             "cannot read the client of the request",
         )
     })?;
-    let key = speaker_key(st, &transport, &info, &claimed).await?;
-    let env: RequestEnvelope = wire
-        .request
-        .open(REQUEST_DOMAIN, &key)
-        .map_err(|e| reject(S::BAD_REQUEST, "bad_signature", e.to_string()))?;
+    let keys = speaker_keys(st, &transport, &info, &claimed).await?;
+    let env: RequestEnvelope = match open_with_any(&wire.request, &keys) {
+        Ok(env) => env,
+        Err(first) => {
+            // A hosted member may have rotated its key since our directory copy.
+            // Look once more with a fresh directory before calling it a forgery.
+            st.dir
+                .refresh_throttled(std::time::Duration::from_secs(2))
+                .await;
+            let fresh = speaker_keys(st, &transport, &info, &claimed).await?;
+            if fresh == keys {
+                return Err(reject(S::BAD_REQUEST, "bad_signature", first));
+            }
+            open_with_any(&wire.request, &fresh)
+                .map_err(|e| reject(S::BAD_REQUEST, "bad_signature", e))?
+        }
+    };
     if env.client.member != claimed {
         return Err(reject(
             S::FORBIDDEN,
@@ -599,17 +647,17 @@ async fn sign_response(
         body_sha256: body_sha.clone(),
         content_type: content_type.to_string(),
     };
-    let signed =
-        SignedMessage::sign_async(RESPONSE_DOMAIN, &envelope, st.identity().signer.as_ref())
-            .await
-            .map_err(|e| {
-                tracing::error!("cannot sign the answer: {e}");
-                reject(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "signer_unavailable",
-                    "the provider's signer is unavailable, so the answer was not delivered",
-                )
-            })?;
+    let signed = st
+        .sign_message(RESPONSE_DOMAIN, &envelope)
+        .await
+        .map_err(|e| {
+            tracing::error!("cannot sign the answer: {e}");
+            reject(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "signer_unavailable",
+                "the provider's signer is unavailable, so the answer was not delivered",
+            )
+        })?;
     Ok((
         ExchangeResponse {
             response: signed,

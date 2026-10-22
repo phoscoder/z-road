@@ -77,6 +77,25 @@ impl CertAuthority {
         allowed_sans: &[String],
         valid_days: i64,
     ) -> Result<String> {
+        self.sign_csr_window(
+            csr_pem,
+            member,
+            allowed_sans,
+            OffsetDateTime::now_utc() - Duration::minutes(5),
+            OffsetDateTime::now_utc() + Duration::days(valid_days),
+        )
+    }
+
+    /// Like [`sign_csr`](Self::sign_csr) with an explicit validity window (used
+    /// by tests and by tooling that issues certificates for a given period).
+    pub fn sign_csr_window(
+        &self,
+        csr_pem: &str,
+        member: &MemberId,
+        allowed_sans: &[String],
+        not_before: OffsetDateTime,
+        not_after: OffsetDateTime,
+    ) -> Result<String> {
         let mut csr = CertificateSigningRequestParams::from_pem(csr_pem).map_err(pki)?;
         if csr.public_key.algorithm() != &PKCS_ED25519 {
             return Err(Error::Pki("members must use Ed25519 keys".into()));
@@ -105,8 +124,8 @@ impl CertAuthority {
             ExtendedKeyUsagePurpose::ServerAuth,
             ExtendedKeyUsagePurpose::ClientAuth,
         ];
-        csr.params.not_before = OffsetDateTime::now_utc() - Duration::minutes(5);
-        csr.params.not_after = OffsetDateTime::now_utc() + Duration::days(valid_days);
+        csr.params.not_before = not_before;
+        csr.params.not_after = not_after;
         let cert = csr.signed_by(&self.cert, &self.key).map_err(pki)?;
         Ok(cert.pem())
     }
@@ -148,6 +167,8 @@ pub struct CertInfo {
     pub member: MemberId,
     pub public_key: Vec<u8>,
     pub fingerprint: String,
+    /// Start of validity, Unix seconds.
+    pub not_before: i64,
     /// End of validity, Unix seconds.
     pub not_after: i64,
 }
@@ -174,8 +195,32 @@ pub fn inspect_cert_der(der: &[u8]) -> Result<CertInfo> {
             .data
             .to_vec(),
         fingerprint: sha256_hex(der),
+        not_before: cert.validity().not_before.timestamp(),
         not_after: cert.validity().not_after.timestamp(),
     })
+}
+
+/// The host names and IP addresses in a certificate's subject alternative names.
+pub fn cert_sans(pem: &str) -> Result<Vec<String>> {
+    let der = cert_pem_to_der(pem)?;
+    let (_, cert) = X509Certificate::from_der(&der).map_err(pki)?;
+    let mut out = Vec::new();
+    if let Ok(Some(ext)) = cert.subject_alternative_name() {
+        for n in &ext.value.general_names {
+            match n {
+                x509_parser::extensions::GeneralName::DNSName(d) => out.push((*d).to_string()),
+                x509_parser::extensions::GeneralName::IPAddress(b) => {
+                    if let Ok(a) = <[u8; 4]>::try_from(*b) {
+                        out.push(std::net::Ipv4Addr::from(a).to_string());
+                    } else if let Ok(a) = <[u8; 16]>::try_from(*b) {
+                        out.push(std::net::Ipv6Addr::from(a).to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(out)
 }
 
 pub fn inspect_cert_pem(pem: &str) -> Result<CertInfo> {
