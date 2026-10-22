@@ -19,11 +19,28 @@ pub async fn publish(st: &AppState) -> Result<usize> {
             id: s.id.clone(),
             title: s.title.clone().unwrap_or_else(|| s.id.clone()),
             description: s.description.clone().unwrap_or_default(),
+            request_schema: st
+                .schemas
+                .get(&s.id)
+                .and_then(|x| x.request.as_ref())
+                .map(|(v, _)| v.clone()),
+            response_schema: st
+                .schemas
+                .get(&s.id)
+                .and_then(|x| x.response.as_ref())
+                .map(|(v, _)| v.clone()),
         })
         .collect();
     let n = services.len();
     CentralClient::from_tls(&st.cfg.central_url, st.identity().tls_client.clone())
-        .publish_catalogue(&PublishCatalogueRequest { services })
+        .publish_catalogue(&PublishCatalogueRequest {
+            services,
+            on_behalf_of: st
+                .cfg
+                .remote_signer
+                .as_ref()
+                .map(|_| st.cfg.member_id.clone()),
+        })
         .await
         .context("publishing the service catalogue")?;
     Ok(n)

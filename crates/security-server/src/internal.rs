@@ -199,9 +199,11 @@ async fn call(
         }
         Err(e) => {
             let status = match &e {
-                CallError::Invalid(_) => StatusCode::BAD_REQUEST,
+                CallError::Invalid(_) | CallError::SchemaViolation(_) => StatusCode::BAD_REQUEST,
                 CallError::UnknownProvider(_) => StatusCode::NOT_FOUND,
-                CallError::Unreachable(_) => StatusCode::SERVICE_UNAVAILABLE,
+                CallError::Unreachable(_) | CallError::SignerUnavailable(_) => {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
                 CallError::Remote { status, .. } => {
                     StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
                 }
@@ -276,7 +278,7 @@ async fn access_log(
                 message_id,
                 outcome,
                 ..
-            } if role == "provider" && r == want => Some(AccessRecord {
+            } if role == "provider" && r == want && outcome != "received" => Some(AccessRecord {
                 time_ms: e.ts_ms,
                 accessed_by: peer,
                 client,

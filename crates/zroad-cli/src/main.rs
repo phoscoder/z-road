@@ -39,9 +39,14 @@ enum Cmd {
         id: MemberId,
         #[arg(long)]
         name: String,
-        /// https URL of the member's security server.
-        #[arg(long)]
+        /// https URL of the member's security server (not used with --hosted-by).
+        #[arg(long, default_value = "")]
         endpoint: String,
+        /// Register the member as hosted by this already-enrolled node. The
+        /// member keeps its own key (see signer-service); peers accept its traffic
+        /// only from that node.
+        #[arg(long)]
+        hosted_by: Option<MemberId>,
     },
     /// Revoke a member. Revocation is final.
     MemberRevoke {
@@ -61,6 +66,9 @@ enum Cmd {
     Catalogue {
         #[command(flatten)]
         central: Central,
+        /// Also print each service's request and response JSON Schemas.
+        #[arg(long)]
+        schemas: bool,
     },
     /// Generate a key, enrol with the central server and store the identity.
     Enroll {
@@ -147,10 +155,14 @@ async fn main() -> Result<()> {
             id,
             name,
             endpoint,
+            hosted_by,
         } => {
             let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
             let token = std::fs::read_to_string(admin_token_file)?;
-            let r = c.add_member(token.trim(), &id, &name, &endpoint).await?;
+            let r = match &hosted_by {
+                Some(node) => c.add_hosted_member(token.trim(), &id, &name, node).await?,
+                None => c.add_member(token.trim(), &id, &name, &endpoint).await?,
+            };
             println!("{}", r.enrollment_token);
             eprintln!(
                 "member {} registered; give the token above to its operator (single use)",
@@ -171,7 +183,7 @@ async fn main() -> Result<()> {
             let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
             println!("{}", serde_json::to_string_pretty(&c.directory().await?)?);
         }
-        Cmd::Catalogue { central } => {
+        Cmd::Catalogue { central, schemas } => {
             let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
             let cat = c.catalogue().await?;
             if cat.entries.is_empty() {
@@ -181,6 +193,22 @@ async fn main() -> Result<()> {
                 println!("{}\n    {}", e.service, e.title);
                 if !e.description.is_empty() {
                     println!("    {}", e.description);
+                }
+                let has = |s: &Option<serde_json::Value>| if s.is_some() { "yes" } else { "no" };
+                println!(
+                    "    request schema: {}, response schema: {}",
+                    has(&e.request_schema),
+                    has(&e.response_schema)
+                );
+                if schemas {
+                    for (name, s) in [
+                        ("request", &e.request_schema),
+                        ("response", &e.response_schema),
+                    ] {
+                        if let Some(s) = s {
+                            println!("    {name} schema:\n{}", serde_json::to_string_pretty(s)?);
+                        }
+                    }
                 }
             }
         }

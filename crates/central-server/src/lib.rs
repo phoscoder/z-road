@@ -184,9 +184,33 @@ async fn add_member(
     Json(req): Json<AddMemberRequest>,
 ) -> ApiResult<AddMemberResponse> {
     require_admin(&app, &headers)?;
-    endpoint_host(&req.endpoint)?;
     let token = random_secret();
     let mut st = app.state.lock().unwrap_or_else(|p| p.into_inner());
+
+    // A hosted member is reached through its node: same endpoint, and the node
+    // must already be an enrolled, active, stand-alone member.
+    let endpoint = match &req.hosted_by {
+        Some(node) => {
+            let rec = st
+                .members
+                .iter()
+                .find(|m| &m.id == node)
+                .ok_or_else(|| bad("the hosting node is not registered"))?;
+            if rec.status != MemberStatus::Active || rec.cert_pem.is_none() {
+                return Err(bad("the hosting node must be enrolled and active"));
+            }
+            if rec.hosted_by.is_some() {
+                return Err(bad("a node cannot itself be hosted"));
+            }
+            if node == &req.id {
+                return Err(bad("a member cannot host itself"));
+            }
+            rec.endpoint.clone()
+        }
+        None => req.endpoint.clone(),
+    };
+    endpoint_host(&endpoint)?;
+
     match st.members.iter_mut().find(|m| m.id == req.id) {
         Some(m) if m.status == MemberStatus::Revoked => {
             return Err(ApiError(
@@ -195,17 +219,25 @@ async fn add_member(
                 "this member was revoked; register a new member code".into(),
             ))
         }
+        Some(m) if m.hosted_by != req.hosted_by => {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "hosting_mismatch",
+                "an existing member cannot change who hosts it; register a new member code".into(),
+            ))
+        }
         // Re-issuing a token lets an existing member rotate its certificate.
         Some(m) => {
             m.name = req.name;
-            m.endpoint = req.endpoint;
+            m.endpoint = endpoint;
         }
         None => st.members.push(MemberRecord {
             id: req.id.clone(),
             name: req.name,
-            endpoint: req.endpoint,
+            endpoint,
             status: MemberStatus::Pending,
             cert_pem: None,
+            hosted_by: req.hosted_by.clone(),
         }),
     }
     st.token_hashes
@@ -377,7 +409,27 @@ async fn publish_catalogue(
     Json(req): Json<PublishCatalogueRequest>,
 ) -> ApiResult<serde_json::Value> {
     let mut st = app.state.lock().unwrap_or_else(|p| p.into_inner());
-    let member = authenticate_member(&st, peer)?;
+    let caller = authenticate_member(&st, peer)?;
+    // A node may publish for the members it hosts; nobody else may publish for others.
+    let member = match req.on_behalf_of {
+        None => caller,
+        Some(m) if m == caller => caller,
+        Some(m) => {
+            let hosted = st.members.iter().any(|r| {
+                r.id == m
+                    && r.status == MemberStatus::Active
+                    && r.hosted_by.as_ref() == Some(&caller)
+            });
+            if !hosted {
+                return Err(ApiError(
+                    StatusCode::FORBIDDEN,
+                    "forbidden",
+                    "that member is not hosted by the caller".into(),
+                ));
+            }
+            m
+        }
+    };
     if req.services.len() > MAX_SERVICES_PER_MEMBER {
         return Err(bad("too many services"));
     }
@@ -389,10 +441,21 @@ async fn publish_catalogue(
         if item.title.len() > 100 || item.description.len() > 500 {
             return Err(bad("title (100) or description (500) too long"));
         }
+        for (what, schema) in [
+            ("request", &item.request_schema),
+            ("response", &item.response_schema),
+        ] {
+            if let Some(s) = schema {
+                zroad_core::schema::CompiledSchema::compile(s)
+                    .map_err(|e| bad(format!("{} {what}_schema: {e}", item.id)))?;
+            }
+        }
         entries.push(CatalogueEntry {
             service,
             title: item.title,
             description: item.description,
+            request_schema: item.request_schema,
+            response_schema: item.response_schema,
         });
     }
     let n = entries.len();

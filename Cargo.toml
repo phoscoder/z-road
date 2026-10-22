@@ -5,6 +5,7 @@ members = [
   "crates/zroad-net",
   "crates/central-server",
   "crates/timestamp-service",
+  "crates/signer-service",
   "crates/security-server",
   "crates/zroad-cli",
   "crates/zroad-client",
@@ -13,6 +14,8 @@ members = [
   "examples/buyer-client",
   "examples/citizen-portal",
 ]
+
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"
@@ -55,6 +58,7 @@ zroad-net = { path = "crates/zroad-net" }
 zroad-client = { path = "crates/zroad-client" }
 central-server = { path = "crates/central-server" }
 timestamp-service = { path = "crates/timestamp-service" }
+signer-service = { path = "crates/signer-service" }
 security-server = { path = "crates/security-server" }
 
 [workspace.lints.rust]

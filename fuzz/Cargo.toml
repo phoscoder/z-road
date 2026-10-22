@@ -1,0 +1,48 @@
+[package]
+name = "zroad-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring", "x509-parser"] }
+serde_json = "1"
+tempfile = "3"
+zroad-core = { path = "../crates/zroad-core" }
+
+# Not part of the main workspace: it needs a nightly toolchain.
+[workspace]
+
+[[bin]]
+name = "ids"
+path = "fuzz_targets/ids.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "wire_messages"
+path = "fuzz_targets/wire_messages.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "audit_log"
+path = "fuzz_targets/audit_log.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "certificates"
+path = "fuzz_targets/certificates.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "schema"
+path = "fuzz_targets/schema.rs"
+test = false
+doc = false

@@ -99,10 +99,36 @@ impl CentralClient {
         name: &str,
         endpoint: &str,
     ) -> Result<AddMemberResponse> {
+        self.add_member_full(admin_token, id, name, endpoint, None)
+            .await
+    }
+
+    /// Register a member hosted by `node`: it signs with its own key but is
+    /// reached through the node's endpoint and TLS identity.
+    pub async fn add_hosted_member(
+        &self,
+        admin_token: &str,
+        id: &MemberId,
+        name: &str,
+        node: &MemberId,
+    ) -> Result<AddMemberResponse> {
+        self.add_member_full(admin_token, id, name, "", Some(node.clone()))
+            .await
+    }
+
+    async fn add_member_full(
+        &self,
+        admin_token: &str,
+        id: &MemberId,
+        name: &str,
+        endpoint: &str,
+        hosted_by: Option<MemberId>,
+    ) -> Result<AddMemberResponse> {
         let body = AddMemberRequest {
             id: id.clone(),
             name: name.into(),
             endpoint: endpoint.into(),
+            hosted_by,
         };
         self.call(
             "POST",

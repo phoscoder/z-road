@@ -1,0 +1,29 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '41 3 * * 1'   # weekly
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ids, wire_messages, audit_log, certificates, schema]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - name: Fuzz ${{ matrix.target }} for five minutes
+        working-directory: fuzz
+        run: |
+          seeds=""; [ -d "seeds/${{ matrix.target }}" ] && seeds="seeds/${{ matrix.target }}"
+          cargo +nightly fuzz run ${{ matrix.target }} $seeds -- -max_total_time=300 -rss_limit_mb=2048
+      - name: Keep any crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}

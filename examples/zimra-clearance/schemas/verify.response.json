@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tax clearance check: answer",
+  "description": "Status and expiry only. No turnover or tax history is ever returned.",
+  "type": "object",
+  "required": ["tin", "name", "status", "valid_until"],
+  "additionalProperties": false,
+  "properties": {
+    "tin": { "type": "string", "pattern": "^[0-9]{10}$" },
+    "name": { "type": "string" },
+    "status": { "enum": ["VALID", "EXPIRED", "REVOKED"] },
+    "valid_until": {
+      "description": "End of the clearance period, or null if there is none.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    }
+  }
+}

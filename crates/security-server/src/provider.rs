@@ -34,7 +34,10 @@ fn reject(status: StatusCode, code: &'static str, message: impl Into<String>) ->
 #[derive(Default)]
 struct Attempt {
     message_id: String,
+    /// The member the request is from (the accountable party).
     peer: String,
+    /// The node that carried it, when the member is hosted.
+    via: Option<String>,
     client: String,
     service: String,
     request_sha: String,
@@ -159,12 +162,76 @@ fn log(
         status,
         outcome,
         subject_ref: a.subject_ref.clone(),
+        via: a.via.clone(),
     });
     if let Err(e) = r {
         tracing::error!("cannot write audit log: {e}");
         return false;
     }
     true
+}
+
+fn peek_client_member(msg: &SignedMessage) -> Option<zroad_core::id::MemberId> {
+    #[derive(serde::Deserialize)]
+    struct Peek {
+        client: zroad_core::id::ClientId,
+    }
+    let peek: Peek = serde_json::from_slice(&msg.payload().ok()?).ok()?;
+    Some(peek.client.member)
+}
+
+/// The key a request claiming to be from `claimed` must be signed with.
+///
+/// * A member speaking for itself over its own TLS identity: its certificate
+///   key, unless it is a hosted member, which must come through its node.
+/// * A node speaking for a member it hosts: the hosted member's registered key
+///   (which the node does not hold), and only if the directory says that node
+///   hosts it.
+async fn speaker_key(
+    st: &AppState,
+    transport: &zroad_core::id::MemberId,
+    info: &pki::CertInfo,
+    claimed: &zroad_core::id::MemberId,
+) -> Result<Vec<u8>, Reject> {
+    use StatusCode as S;
+    let lookup = |st: &AppState| st.dir.snapshot().get_active(claimed).cloned();
+    let mut rec = lookup(st);
+    if rec.is_none() && claimed != transport {
+        st.dir
+            .refresh_throttled(std::time::Duration::from_secs(2))
+            .await;
+        rec = lookup(st);
+    }
+    if claimed == transport {
+        if rec.as_ref().is_some_and(|r| r.hosted_by.is_some()) {
+            return Err(reject(
+                S::FORBIDDEN,
+                "hosted_member_must_use_node",
+                "this member is hosted; its traffic must come through its node",
+            ));
+        }
+        return Ok(info.public_key.clone());
+    }
+    let rec = rec
+        .filter(|r| r.hosted_by.as_ref() == Some(transport))
+        .ok_or_else(|| {
+            reject(
+                S::FORBIDDEN,
+                "client_mismatch",
+                "the authenticated peer is not allowed to speak for that member",
+            )
+        })?;
+    rec.cert_pem
+        .as_deref()
+        .and_then(|pem| pki::inspect_cert_pem(pem).ok())
+        .map(|c| c.public_key)
+        .ok_or_else(|| {
+            reject(
+                S::FORBIDDEN,
+                "client_mismatch",
+                "that member has no usable certificate",
+            )
+        })
 }
 
 fn rate_limited(st: &AppState, member: &str) -> bool {
@@ -208,7 +275,10 @@ async fn process(
     })?;
     let info = pki::inspect_cert_der(&peer.0)
         .map_err(|e| reject(S::UNAUTHORIZED, "bad_client_certificate", e.to_string()))?;
-    a.peer = info.member.to_string();
+    // `transport` is who is on the other end of the TLS connection: a member
+    // speaking for itself, or a node carrying traffic for members it hosts.
+    let transport = info.member.clone();
+    a.peer = transport.to_string();
 
     if rate_limited(st, &a.peer) {
         return Err(reject(
@@ -241,10 +311,31 @@ async fn process(
         .request
         .payload_sha256()
         .map_err(|e| reject(S::BAD_REQUEST, "malformed", e.to_string()))?;
+    // Who claims to be speaking? Read without trusting it, only to pick the key
+    // to verify with; the signature then proves (or disproves) the claim.
+    let claimed = peek_client_member(&wire.request).ok_or_else(|| {
+        reject(
+            S::BAD_REQUEST,
+            "malformed",
+            "cannot read the client of the request",
+        )
+    })?;
+    let key = speaker_key(st, &transport, &info, &claimed).await?;
     let env: RequestEnvelope = wire
         .request
-        .open(REQUEST_DOMAIN, &info.public_key)
+        .open(REQUEST_DOMAIN, &key)
         .map_err(|e| reject(S::BAD_REQUEST, "bad_signature", e.to_string()))?;
+    if env.client.member != claimed {
+        return Err(reject(
+            S::FORBIDDEN,
+            "client_mismatch",
+            "client does not match the signed request",
+        ));
+    }
+    a.peer = claimed.to_string();
+    if claimed != transport {
+        a.via = Some(transport.to_string());
+    }
     a.message_id = env.message_id.clone();
     a.client = env.client.to_string();
     a.service = env.service.to_string();
@@ -263,13 +354,7 @@ async fn process(
     if env.message_id.is_empty() || env.message_id.len() > 64 {
         return Err(reject(S::BAD_REQUEST, "malformed", "bad message id"));
     }
-    if env.client.member != info.member {
-        return Err(reject(
-            S::FORBIDDEN,
-            "client_mismatch",
-            "client does not belong to the authenticated member",
-        ));
-    }
+    // (the client's member was authenticated above by `speaker_key`)
     if env.service.member != st.cfg.member_id {
         return Err(reject(
             S::BAD_REQUEST,
@@ -316,11 +401,31 @@ async fn process(
         ));
     }
 
+    // Structural validation: nothing malformed reaches the internal system.
+    if let Some((_, schema)) = st.schemas.get(&local).and_then(|s| s.request.as_ref()) {
+        if !zroad_core::schema::is_json_content_type(&env.content_type) {
+            return Err(reject(
+                S::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_media_type",
+                "this service only accepts JSON",
+            ));
+        }
+        if let Err(errors) = schema.check_bytes(&body) {
+            return Err(reject(
+                S::BAD_REQUEST,
+                "schema_violation",
+                errors.join("; "),
+            ));
+        }
+    }
+
     // Duplicate and replay handling.
     let key = format!("{}|{}", a.peer, env.message_id);
     let fingerprint = (a.client.clone(), a.service.clone(), env.body_sha256.clone());
     let now = now_ms();
-    {
+    // The lock is never held across an await: a duplicate's stored answer is
+    // copied out and signed afterwards.
+    let stored: Option<(u16, Bytes, String)> = {
         let mut map = st.dedupe.lock().unwrap_or_else(|p| p.into_inner());
         if map.len() >= DEDUPE_MAX {
             map.retain(|_, e| e.expires_ms > now);
@@ -359,22 +464,40 @@ async fn process(
                     status,
                     body,
                     content_type,
-                } => {
-                    let (resp, sha) =
-                        sign_response(st, &env, &a.request_sha, *status, body, content_type)?;
-                    return Ok((resp, *status, sha, true));
-                }
+                } => Some((*status, body.clone(), content_type.clone())),
                 DedupeState::Processed => unreachable!("handled above"),
             }
+        } else {
+            map.insert(
+                key.clone(),
+                DedupeEntry {
+                    expires_ms: now + DEDUPE_TTL_MS,
+                    fingerprint,
+                    state: DedupeState::InFlight,
+                },
+            );
+            None
         }
-        map.insert(
-            key.clone(),
-            DedupeEntry {
-                expires_ms: now + DEDUPE_TTL_MS,
-                fingerprint,
-                state: DedupeState::InFlight,
-            },
-        );
+    };
+    if let Some((status, body, content_type)) = stored {
+        let (resp, sha) =
+            sign_response(st, &env, &a.request_sha, status, &body, &content_type).await?;
+        return Ok((resp, status, sha, true));
+    }
+
+    // Write-ahead: record that the request is about to be forwarded. If the log
+    // cannot be written the request is refused *before* it reaches the internal
+    // system, so there is never an effect without a record.
+    if !log(st, a, "received".into(), None, None) {
+        st.dedupe
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&key);
+        return Err(reject(
+            S::SERVICE_UNAVAILABLE,
+            "audit_unavailable",
+            "the provider cannot record this exchange, so it did not process it",
+        ));
     }
 
     let forwarded = zroad_net::request(
@@ -412,7 +535,32 @@ async fn process(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/json")
         .to_string();
-    let (resp, sha) = sign_response(st, &env, &a.request_sha, up.status, &up.body, &content_type)?;
+    if (200..300).contains(&up.status) {
+        if let Some(sch) = st.schemas.get(&local) {
+            if let Some((_, schema)) = &sch.response {
+                if let Err(errors) = schema.check_bytes(&up.body) {
+                    tracing::warn!(
+                        "answer of {local} violates its response schema: {}",
+                        errors.join("; ")
+                    );
+                    if sch.enforce_response {
+                        st.dedupe
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&key);
+                        return Err(reject(
+                            S::BAD_GATEWAY,
+                            "upstream_schema_violation",
+                            "the provider's system returned an answer that does not match its published schema",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    // Remember the answer before signing it, so that if the signer is briefly
+    // unavailable a retry is answered from the stored result and the internal
+    // system is not called twice.
     {
         let mut map = st.dedupe.lock().unwrap_or_else(|p| p.into_inner());
         if up.status < 500 {
@@ -420,17 +568,19 @@ async fn process(
                 e.state = DedupeState::Done {
                     status: up.status,
                     body: up.body.clone(),
-                    content_type,
+                    content_type: content_type.clone(),
                 };
             }
         } else {
             map.remove(&key);
         }
     }
+    let (resp, sha) =
+        sign_response(st, &env, &a.request_sha, up.status, &up.body, &content_type).await?;
     Ok((resp, up.status, sha, false))
 }
 
-fn sign_response(
+async fn sign_response(
     st: &AppState,
     env: &RequestEnvelope,
     request_sha: &str,
@@ -449,8 +599,17 @@ fn sign_response(
         body_sha256: body_sha.clone(),
         content_type: content_type.to_string(),
     };
-    let signed = SignedMessage::sign(RESPONSE_DOMAIN, &envelope, st.identity().signer.as_ref())
-        .map_err(|e| reject(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
+    let signed =
+        SignedMessage::sign_async(RESPONSE_DOMAIN, &envelope, st.identity().signer.as_ref())
+            .await
+            .map_err(|e| {
+                tracing::error!("cannot sign the answer: {e}");
+                reject(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "signer_unavailable",
+                    "the provider's signer is unavailable, so the answer was not delivered",
+                )
+            })?;
     Ok((
         ExchangeResponse {
             response: signed,

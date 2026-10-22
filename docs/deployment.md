@@ -80,6 +80,9 @@ id       = "tax-clearance/verify/v1"
 upstream = "http://10.0.0.5:9001/verify"
 title    = "Tax clearance check"       # shown in the public catalogue (optional)
 description = "Is this TIN cleared? Returns status and expiry only."
+request_schema  = "schemas/verify.request.json"    # JSON Schema files (optional)
+response_schema = "schemas/verify.response.json"
+enforce_response_schema = false                    # true: withhold non-conforming answers
 
 [[access]]
 service = "tax-clearance/verify/v1"
@@ -127,6 +130,50 @@ key, so the operator can sign as them: only use this where the legal agreement
 between member and operator says so. A single-member file in the original format
 still works, and a single-member node also serves the unprefixed paths.
 
+## Member-held keys on a shared node
+
+If a hosted member must not give the operator its key, run a signer on its own
+machine and let the operator's node carry the traffic. The steps:
+
+1. **Authority:** enrol the node as a member of its own (`ZW/NODE/<name>`, a normal
+   `member-add` and `enroll`, with the node's endpoint). Then register each hosted
+   member against it:
+   `zroad-cli member-add ... --id ZW/COM/11111111 --name "Acme" --hosted-by ZW/NODE/acme-hosting`
+   (the endpoint is taken from the node).
+2. **Hosted member, on its own machine:** enrol to obtain its key and certificate,
+   using the node's host name as the SAN, then create the signer's TLS identity and run it:
+
+   ```sh
+   zroad-cli enroll --central https://central.example.zw:8443 --ca ca.pem \
+     --id ZW/COM/11111111 --token <token> --san node.example.zw --out ./signer
+   signer-service init --dir ./signer --san signer.acme.example
+   signer-service run  --dir ./signer --listen 0.0.0.0:9443 \
+     --member ZW/COM/11111111 --node ZW/NODE/acme-hosting
+   ```
+
+   Send the node's operator only `signer/cert.pem`, `signer/ca.pem` and
+   `signer/signer-ca.pem`. **Never** `key.pem`.
+3. **Node operator:** add the node identity and the member to the node file. The
+   member's `data_dir` holds only `cert.pem` and `ca.pem`; startup refuses if a
+   `key.pem` is there.
+
+   ```toml
+   node_member   = "ZW/NODE/acme-hosting"
+   node_data_dir = "node-identity"          # key.pem, cert.pem, ca.pem of the node member
+
+   [[members]]
+   member_id   = "ZW/COM/11111111"
+   data_dir    = "acme"                      # cert.pem + ca.pem only
+   admin_token = "a-long-random-token-for-acme"
+   remote_signer = { url = "https://signer.acme.example:9443", ca_file = "acme-signer-ca.pem" }
+   ```
+
+The signer writes `audit/log.jsonl` with one `signed` entry per signature. Check
+it with `zroad-cli audit-verify --log ./signer/audit/log.jsonl`, and compare it
+with what the node reports. Renew the member's key on the signer's machine
+(`zroad-cli renew`, then restart the signer); the node's own certificate is renewed
+with `zroad-cli renew` on the node identity directory and a restart.
+
 ## Calling a service
 
 Application developers: see [integration.md](integration.md). The essentials:
@@ -159,7 +206,7 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 | See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token … --subject 2000123456` |
 | Fetch a stored proof | `GET /admin/v1/proofs/<message_id>` |
 | Renew a certificate now | `POST /admin/v1/renew` on a running security server (automatic when under `renew_before_days`). Offline alternative: `zroad-cli renew --central … --dir … --san …`, then restart |
-| See what the network offers | `zroad-cli catalogue --central https://central.example.zw:8443 --ca ca.pem` |
+| See what the network offers | `zroad-cli catalogue --central https://central.example.zw:8443 --ca ca.pem` (add `--schemas` to print the JSON Schemas) |
 | Republish your services now | `POST /admin/v1/catalogue/publish` |
 | Check certificate expiry | `GET /admin/v1/identity` (a warning is also logged under 30 days) |
 | Demo citizen page | `citizen-portal --security-server http://127.0.0.1:7002 --admin-token … --directory <data_dir>/directory.json` (demo only: it does not authenticate citizens) |

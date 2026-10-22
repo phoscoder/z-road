@@ -7,6 +7,7 @@ pub mod error;
 pub mod id;
 pub mod msg;
 pub mod pki;
+pub mod schema;
 
 pub use error::{Error, Result};
 

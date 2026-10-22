@@ -157,6 +157,7 @@ z-road/
     central-server/     certificate authority and member directory
     timestamp-service/  trusted timestamps for audit log anchoring
     zroad-client/       Rust client library for integrating applications
+    signer-service/     lets a hosted member keep its own signing key on its own machine
     zroad-cli/          admin and audit tool: enrol, revoke, verify logs and proofs, citizen access log
     e2e-tests/          whole-network tests over real mutual TLS
   examples/
@@ -195,8 +196,8 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 | Access control | Per-service, default-deny rules evaluated by the provider; revocation through the directory |
 | Replay and retries | Per-peer message id cache (rebuilt from the audit log after a restart); identical retries are idempotent |
 | Integration | Plain-HTTP internal API ([OpenAPI](docs/openapi-internal.yaml)), a Rust client library with typed errors, async submit-and-wait and offline proof verification ([guide](docs/integration.md)) |
-| Discovery | A public service catalogue: providers publish what they offer, consumers list it (`zroad-cli catalogue`); access rules stay private |
-| Shared nodes | One security server can host many members with separate keys, logs, tokens and rules ([deployment guide](docs/deployment.md#shared-nodes)); the operator holds the keys |
+| Discovery and contracts | A public service catalogue with a JSON Schema per service request and answer; providers enforce them before anything reaches their system, consumers can check early; access rules stay private |
+| Shared nodes | One security server can host many members with separate logs, tokens and rules ([deployment guide](docs/deployment.md#shared-nodes)). Operator-held keys, or **member-held keys**: each hosted member signs with its own key in a signer service on its own machine, and the node cannot forge its messages ([guide](docs/deployment.md#member-held-keys-on-a-shared-node)) |
 | Resilience | Durable async outbox with backoff; cached directory keeps working if the central server is down |
 | Accountability | Hash-chained audit log on both sides, refuses to start on a broken chain, periodic trusted-timestamp anchors |
 | Proofs | A signed proof header on every answer, verifiable offline with `zroad-cli proof-verify` |
@@ -209,10 +210,10 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [x] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
 - [x] **Phase 3: Resilience.** Durable outbox, retries with backoff, idempotent redelivery, cached directory.
 - [x] **Phase 4: Transparency.** Access log by data subject and a demo citizen page (`examples/citizen-portal`). A real citizen-facing service still needs identity proofing of the citizen.
-- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, coverage-guided fuzzing, and an independent security review.
+- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, coverage-guided fuzzing of the parsers (`fuzz/`), fail-closed audit logging with a write-ahead record, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, longer fuzz campaigns, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
-Not started: member-held keys on shared nodes, request and response schemas in the catalogue, ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
+Not started: ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
 
 ## Documentation
 
@@ -222,7 +223,7 @@ Not started: member-held keys on shared nodes, request and response schemas in t
 - [Integrating an application](docs/integration.md) and the [internal API (OpenAPI)](docs/openapi-internal.yaml)
 - [Legal and regulatory considerations](docs/legal-considerations.md)
 - [Pilot plan](docs/pilot-plan.md)
-- [Design note: shared security servers](docs/design/shared-nodes.md) (partly implemented)
+- [Design note: shared security servers](docs/design/shared-nodes.md) (implemented)
 - [Security policy](SECURITY.md) and [contributing guide](CONTRIBUTING.md)
 
 ## Contributing

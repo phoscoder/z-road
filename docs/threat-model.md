@@ -39,7 +39,7 @@ assurance for a production deployment.
 | Replay | Per-peer message id cache, ±5 minute window, identical retries are idempotent and re-signed. | The cache is rebuilt from the audit log after a restart, so messages answered in the last 15 minutes are refused (`already_processed`) rather than answered again. The stored answer is not kept across restarts, so such a retry must use a new message id. Dedupe state is per security server instance: running several instances behind one endpoint needs a shared store. |
 | Unauthorised access to a service | Default-deny access rules per service, evaluated by the provider on the signed, authenticated identity. Denied requests never reach the internal system. | Access rules live in a config file; there is no review workflow yet. |
 | Revoked member keeps access | Directory status is checked on every request and refreshed every 30 s; the registered certificate fingerprint must match. | Up to one refresh interval of delay. If the central server is down, a stale directory means a revocation is not seen. There is no OCSP or CRL at the TLS layer. |
-| Silent loss of accountability | A provider that cannot write its audit record does not deliver the answer (`audit_unavailable`, 503); a security server refuses to start on a corrupt log. | This fail-closed path is not covered by an automated test yet. |
+| Silent loss of accountability | The provider writes a `received` entry *before* forwarding a request and refuses with `audit_unavailable` (503) if it cannot, so no effect happens without a record; if the outcome entry then fails, the answer is withheld. A security server refuses to start on a corrupt log. Covered by an end-to-end test that injects write failures. | A consumer whose log fails after the exchange has still got the answer (the provider's record exists). A tampered log is detected, not prevented. |
 | Rewriting history | Hash-chained log; startup refuses to continue on a broken chain; periodic anchors with a trusted timestamp. | Without anchors, whoever controls the log can rewrite the whole thing consistently. The latest entries since the last anchor are not yet dated. The timestamp authority is a trusted party. |
 | Data subject enumeration through logs | The clear subject is never logged; only `HMAC(secret key, subject)`. | National IDs and TINs are low-entropy. Anyone who holds the secret key (the operator) can test candidate IDs. Protect `subject.key` and treat it as sensitive. |
 | Resource exhaustion | Body size limits, connection cap (1024), handshake and header-read timeouts, per-member rate limit, bounded dedupe cache, upstream timeouts. | This is basic hardening, not DoS protection. Put a reverse proxy or firewall in front of public listeners. |
@@ -47,19 +47,36 @@ assurance for a production deployment.
 | Stolen admin token | Constant-time comparison, minimum length. | Bearer tokens in config files are weak. Prefer a secrets manager and per-operator credentials. |
 | Malicious internal caller | Optional `internal_token`. The client must belong to this member. | Anyone who can reach the internal port can act as any of the member's subsystems. Bind it to localhost or a private network. |
 | Supply chain | Small dependency set from well-known crates; `unsafe` is forbidden in this workspace; CI runs clippy with `-D warnings` and `cargo audit` (weekly too). `Cargo.lock` is committed. | No `cargo vet`; no reproducible builds; no signed releases. |
-| Malformed input | Strict parsing; identifier grammar rejects `..`, `/` and whitespace in segments; hashes and signatures checked before use; a randomised test feeds garbage to every parser and verifier and requires an error, never a panic. | No coverage-guided fuzzing yet. |
+| Malformed or malicious request bodies reaching a provider's system | Optional per-service JSON Schema enforced by the provider's security server before forwarding, with a size cap, no external `$ref` resolution, and a startup failure if a schema cannot be loaded. | Schemas check structure, not meaning, and only exist where a provider writes one. A pathological schema is a CPU risk for whoever compiles it; schemas are size-capped but not otherwise bounded. |
+| Malformed input | Strict parsing; identifier grammar rejects `..`, `/` and whitespace in segments; hashes and signatures checked before use; a randomised test feeds garbage to every parser and verifier and requires an error, never a panic. | Coverage-guided fuzzing covers the id, wire message, audit log, certificate and schema parsers (`fuzz/`); only minutes of campaign so far, and the HTTP handlers and config parser are not fuzzed. |
 
 ## Shared nodes
 
-When one security server hosts several members, the operator holds all their
-private keys and can sign as any of them; members must trust it as they would a
-bank trusts its card processor. Isolation between members is by configuration:
-separate state directories, separate tokens, internal paths per member, and a
-check that a member's internal API only accepts its own client ids. A bug in that
-routing is the main risk, which is why it has a dedicated end-to-end test. The
-node's TLS server certificate belongs to one hosted member at a time, so
-transport-level identity on a shared node means "a registered node"; the
-provider's signature on each answer is what proves which member answered.
+A security server can host several members. Two models, with different trust:
+
+* **Operator-held keys.** The operator holds every hosted member's private key and
+  can sign as any of them; members must trust it as a bank trusts its card
+  processor. Isolation between members is by configuration: separate state
+  directories, tokens, internal paths, and a check that a member's internal API
+  only accepts its own client ids. The node's TLS server certificate belongs to
+  one hosted member at a time.
+* **Member-held keys.** The node has its own identity and each hosted member signs
+  with a key kept in a signer service on its own machine. A compromised node
+  cannot forge a message from a hosted member (providers verify against the
+  member's key; tested), cannot speak for members it does not host, and cannot get
+  the signer to sign anything that is not that member's own request or answer. The
+  signer records every signature in its own hash-chained log, so the member can
+  detect a node that abuses its name (for example by sending requests the member
+  never intended, which the member can see but not prevent except by rate limit or
+  by taking the signer down). A hosted member cannot bypass its node, and revoking
+  the node cuts off everything it hosts.
+
+Residual risk for member-held keys: the node still sees all traffic in clear and
+can drop or delay it; the signer service is a new attack surface and a new
+availability dependency (no signer, no traffic); the signer machine's key is a file
+unless an HSM is used; the node's own certificate is renewed by hand (`zroad-cli
+renew` and a restart); and the signer's policy is limited to ownership, freshness
+and a rate limit (no per-service allow-list yet).
 
 ## Known gaps (not yet addressed)
 

@@ -8,9 +8,10 @@ use anyhow::Result;
 use bytes::Bytes;
 use rustls::ClientConfig;
 use zroad_core::audit::AuditLog;
-use zroad_core::crypto::Signer;
-use zroad_core::directory::Directory;
+use zroad_core::crypto::AsyncSigner;
+use zroad_core::directory::{Catalogue, Directory};
 use zroad_core::pki;
+use zroad_core::schema::CompiledSchema;
 use zroad_net::central_client::CentralClient;
 
 use crate::config::Config;
@@ -24,6 +25,9 @@ pub struct DirectoryCache {
     path: PathBuf,
     current: RwLock<Arc<Directory>>,
     last_attempt: Mutex<Option<Instant>>,
+    /// Compiled request schemas from the catalogue, by service id, with the
+    /// schema they were compiled from (so unchanged ones are not recompiled).
+    request_schemas: RwLock<HashMap<String, (serde_json::Value, Arc<CompiledSchema>)>>,
 }
 
 impl DirectoryCache {
@@ -37,6 +41,7 @@ impl DirectoryCache {
             path,
             current: RwLock::new(Arc::new(cached)),
             last_attempt: Mutex::new(None),
+            request_schemas: RwLock::new(HashMap::new()),
         }
     }
 
@@ -57,7 +62,55 @@ impl DirectoryCache {
             }
         }
         *self.current.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(dir);
+        // The catalogue only supplies optional early validation, so a failure
+        // here must not fail the directory refresh.
+        match self.central.catalogue().await {
+            Ok(cat) => self.update_schemas(&cat),
+            Err(e) => tracing::debug!("catalogue fetch failed: {e}"),
+        }
         Ok(())
+    }
+
+    fn update_schemas(&self, cat: &Catalogue) {
+        let old = self
+            .request_schemas
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let mut next = HashMap::new();
+        for e in &cat.entries {
+            let Some(schema) = &e.request_schema else {
+                continue;
+            };
+            let key = e.service.to_string();
+            match old.get(&key) {
+                Some((prev, compiled)) if prev == schema => {
+                    next.insert(key, (prev.clone(), compiled.clone()));
+                }
+                _ => match CompiledSchema::compile(schema) {
+                    Ok(c) => {
+                        next.insert(key, (schema.clone(), Arc::new(c)));
+                    }
+                    Err(err) => tracing::warn!("ignoring the schema published for {key}: {err}"),
+                },
+            }
+        }
+        *self
+            .request_schemas
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = next;
+    }
+
+    /// The published request schema of a service, if any.
+    pub fn request_schema(
+        &self,
+        service: &zroad_core::id::ServiceId,
+    ) -> Option<Arc<CompiledSchema>> {
+        self.request_schemas
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&service.to_string())
+            .map(|(_, c)| c.clone())
     }
 
     /// Refresh unless one was attempted within `min_interval`. Used when a
@@ -97,7 +150,7 @@ pub struct DedupeEntry {
 
 /// Everything that changes when a certificate is renewed.
 pub struct Identity {
-    pub signer: Arc<dyn Signer>,
+    pub signer: Arc<dyn AsyncSigner>,
     pub cert_pem: String,
     pub tls_client: Arc<ClientConfig>,
 }
@@ -114,6 +167,8 @@ pub struct AppState {
     pub rate: Mutex<HashMap<String, (u64, u32)>>,
     pub subject_key: Vec<u8>,
     pub outbox: Outbox,
+    /// This member's own services' schemas, by `subsystem/service/version`.
+    pub schemas: HashMap<String, ServiceSchemas>,
     pub proofs_dir: PathBuf,
     pub last_anchor_seq: AtomicU64,
 }
@@ -158,4 +213,10 @@ impl Node {
             only: (states.len() == 1).then(|| states[0].clone()),
         }
     }
+}
+
+pub struct ServiceSchemas {
+    pub request: Option<(serde_json::Value, CompiledSchema)>,
+    pub response: Option<(serde_json::Value, CompiledSchema)>,
+    pub enforce_response: bool,
 }

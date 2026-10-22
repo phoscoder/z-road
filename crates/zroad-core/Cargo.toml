@@ -9,10 +9,12 @@ description = "Z-Road protocol types: identifiers, signed messages, PKI helpers 
 workspace = true
 
 [dependencies]
+async-trait = "0.1.92"
 base64.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
 hmac.workspace = true
+jsonschema = { version = "0.60.0", default-features = false }
 rand.workspace = true
 rcgen.workspace = true
 serde.workspace = true

@@ -72,7 +72,9 @@ paths:
             `invalid_request` 400, `unknown_provider` 404, `unknown_service` 404,
             `access_denied` 403, `member_not_active` 403, `provider_unreachable` 503
             (with `Retry-After`), `rate_limited` 429, `bad_response` 502,
-            `audit_unavailable` 503, `internal` 500, and the provider-side codes in docs/protocol.md.
+            `audit_unavailable` 503, `signer_unavailable` 503, `hosted_member_must_use_node` 403,
+            `schema_violation` 400, `unsupported_media_type` 415,
+            `upstream_schema_violation` 502, `internal` 500, and the provider-side codes in docs/protocol.md.
           headers:
             Z-Road-Error: { schema: { type: string } }
             Retry-After:  { schema: { type: string } }

@@ -1,10 +1,10 @@
 # Design note: shared security servers
 
-**Status: partly implemented.** Operator-held keys (mode 1 below) work today: one
-security server process can host several members, each with its own identity,
-audit log, outbox, tokens, services and access rules, behind shared listeners.
-Member-held keys (mode 2), SNI-based certificate selection and the open
-questions are still proposals. See the *Shared nodes* section of
+**Status: implemented, with open questions.** Both key modes work. Operator-held
+keys (mode 1) and member-held keys (mode 2, a signer service on the member's own
+machine, node identity plus member signatures) are implemented and covered by
+end-to-end tests. SNI-based certificate selection was not needed and the open
+questions at the end are still open. See the *Shared nodes* section of
 [deployment.md](../deployment.md) for how to run one.
 
 ### What was built, and how it differs from the sketch
@@ -85,3 +85,23 @@ without the members' audit trails being mixed up.
 * `central-server`: allow several members per endpoint; record the node operator.
 * Tests: two members on one node calling each other and a third party, with
   separate audit logs.
+
+## Member-held keys: what was built
+
+* The node is a member (`ZW/NODE/...`) and authenticates TLS as itself; hosted
+  members are registered with `hosted_by` and inherit the node's endpoint.
+* Authorship comes from the member's own signature, verified by providers against
+  the member's registered key. Providers accept a hosted member only from its node,
+  and refuse a hosted member that connects directly.
+* `signer-service` holds the key, signs only genuinely the member's own requests
+  and answers for the one configured node, rate-limits, and keeps its own
+  hash-chained audit log of every signature, written before signing.
+* Revoking the node removes everything it hosts from the network.
+* Details are in [protocol.md §3a](../protocol.md) and the
+  [deployment guide](../deployment.md#member-held-keys-on-a-shared-node).
+
+What this does **not** give: a member cannot stop a node from *dropping* or
+*delaying* its traffic, and a node still sees every request and answer in clear
+(it terminates the TLS to peers and forwards to the member's system). Member-held
+keys protect authorship (a node cannot make the member say something), not
+confidentiality from the node.

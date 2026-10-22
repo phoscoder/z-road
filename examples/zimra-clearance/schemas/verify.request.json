@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tax clearance check: request",
+  "type": "object",
+  "required": ["tin"],
+  "additionalProperties": false,
+  "properties": {
+    "tin": {
+      "description": "Taxpayer Identification Number: ten digits.",
+      "type": "string",
+      "pattern": "^[0-9]{10}$"
+    }
+  }
+}
