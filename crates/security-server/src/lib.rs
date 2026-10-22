@@ -8,6 +8,7 @@ pub mod catalogue;
 pub mod config;
 pub mod consumer;
 pub mod internal;
+pub mod node;
 pub mod outbox;
 pub mod provider;
 pub mod renew;
@@ -21,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, bail, Context, Result};
 use axum::routing::post;
 use axum::Router;
+use node::NodeIdentity;
 use tokio::task::JoinHandle;
 use zroad_core::audit::{self, AuditLog};
 use zroad_core::crypto::{AsyncSigner, SoftwareSigner};
@@ -150,9 +152,21 @@ pub async fn spawn_node(node: config::NodeConfig) -> Result<Running> {
         if st.cfg.remote_signer.is_none() {
             // a remote-signed member's key is not here, so it renews where its key is
             tasks.push(tokio::spawn(renew::renew_loop(st.clone())));
+        } else {
+            tasks.push(tokio::spawn(node::key_sync_loop(st.clone())));
         }
         tasks.push(tokio::spawn(catalogue::publish_loop(st.clone())));
         tracing::info!("hosting member {}", st.cfg.member_id);
+    }
+    if let Some(n) = node_identity {
+        tasks.push(tokio::spawn(node::node_renew_loop(
+            Arc::new(n),
+            states.clone(),
+            first.central_url.clone(),
+            first.renew_before_days,
+            std::time::Duration::from_secs(first.renew_initial_delay_secs),
+            first.activation_delay(),
+        )));
     }
     tracing::info!(
         "security server up: network https://{} internal http://{}",
@@ -261,6 +275,7 @@ async fn build_member(
     );
     let audit = Arc::new(AuditLog::open(&audit_path).map_err(|e| anyhow!("{e}"))?);
 
+    let mut remote_handle: Option<Arc<RemoteSigner>> = None;
     let (signer, tls_client): (Arc<dyn AsyncSigner>, _) = match (&cfg.remote_signer, node_identity)
     {
         (Some(rs), Some(node)) => {
@@ -268,11 +283,13 @@ async fn build_member(
                 .with_context(|| format!("reading {}", rs.ca_file.display()))?;
             // The node authenticates to the signer with its own certificate and
             // pins the signer's CA.
-            let to_signer = tls::client_config(&signer_ca, Some((&node.cert_pem, &node.key_pem)))?;
-            (
-                Arc::new(RemoteSigner::new(&rs.url, to_signer, me.public_key.clone())),
-                node.tls_client.clone(),
-            )
+            let creds = node.creds();
+            let to_signer =
+                tls::client_config(&signer_ca, Some((&creds.cert_pem, &creds.key_pem)))?;
+            let remote = Arc::new(RemoteSigner::new(&rs.url, to_signer, me.public_key.clone()));
+            node.register_signer(remote.clone(), signer_ca);
+            remote_handle = Some(remote.clone());
+            (remote as Arc<dyn AsyncSigner>, creds.tls_client)
         }
         (Some(_), None) => bail!(
             "{} is remote-signed but the node has no identity",
@@ -299,12 +316,14 @@ async fn build_member(
     std::fs::create_dir_all(&proofs_dir)?;
     let dedupe = seed_dedupe(&audit_path, &cfg);
     let schemas = load_schemas(&cfg)?;
+    let remote_signer = remote_handle;
     let auth = cfg.authenticator()?;
     let citizen_issuers = cfg.citizen_issuers()?;
     Ok(Arc::new(AppState {
         schemas,
         auth,
         citizen_issuers,
+        remote_signer,
         ca_pem: ca.clone(),
         identity: AppState::new_identity_lock(state::Identity {
             signer,
@@ -383,40 +402,4 @@ fn load_schemas(cfg: &Config) -> Result<HashMap<String, state::ServiceSchemas>> 
         );
     }
     Ok(out)
-}
-
-/// The node's own member identity, used for TLS by remote-signed members.
-struct NodeIdentity {
-    cert_pem: String,
-    key_pem: String,
-    tls_client: Arc<rustls::ClientConfig>,
-    server_cert: Arc<tls::ReloadableCert>,
-}
-
-impl NodeIdentity {
-    fn load(cfg: &config::NodeIdentityConfig) -> Result<Self> {
-        let read = |f: &str| {
-            std::fs::read_to_string(cfg.dir.join(f)).with_context(|| {
-                format!(
-                    "reading {} (enrol the node with `zroad-cli enroll`)",
-                    cfg.dir.join(f).display()
-                )
-            })
-        };
-        let (key_pem, cert_pem, ca) = (read("key.pem")?, read("cert.pem")?, read("ca.pem")?);
-        let info = pki::inspect_cert_pem(&cert_pem).map_err(|e| anyhow!("{e}"))?;
-        if info.member != cfg.member {
-            bail!(
-                "the node certificate is for {}, but node_member is {}",
-                info.member,
-                cfg.member
-            );
-        }
-        Ok(Self {
-            tls_client: tls::client_config(&ca, Some((&cert_pem, &key_pem)))?,
-            server_cert: tls::ReloadableCert::new(&cert_pem, &key_pem)?,
-            cert_pem,
-            key_pem,
-        })
-    }
 }

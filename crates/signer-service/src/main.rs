@@ -35,6 +35,15 @@ enum Cmd {
         node: String,
         #[arg(long, default_value_t = 600)]
         max_per_minute: u32,
+        /// Central server URL. When set, the signer renews the member's key and
+        /// certificate before they expire, without a restart.
+        #[arg(long)]
+        central: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        renew_before_days: i64,
+        /// Seconds to keep signing with the old key after a renewal.
+        #[arg(long, default_value_t = 65)]
+        activation_secs: u64,
     },
 }
 
@@ -60,6 +69,9 @@ async fn main() -> Result<()> {
             member,
             node,
             max_per_minute,
+            central,
+            renew_before_days,
+            activation_secs,
         } => {
             let h = signer_service::spawn(signer_service::SignerConfig {
                 dir,
@@ -67,6 +79,12 @@ async fn main() -> Result<()> {
                 member: member.parse().map_err(|e| anyhow::anyhow!("{e}"))?,
                 node: node.parse().map_err(|e| anyhow::anyhow!("{e}"))?,
                 max_per_minute,
+                options: signer_service::Options {
+                    central_url: central,
+                    renew_before_days,
+                    activation_delay: std::time::Duration::from_secs(activation_secs),
+                    ..Default::default()
+                },
             })
             .await?;
             tracing::info!("signer listening on https://{}", h.addr);

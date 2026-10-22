@@ -7,7 +7,6 @@ use zroad_core::audit::{self, AuditEvent};
 use zroad_core::directory::Directory;
 use zroad_core::id::MemberId;
 use zroad_core::msg::Proof;
-use zroad_core::pki;
 use zroad_net::central_client::{enroll_to_dir, CentralClient};
 
 #[derive(Parser)]
@@ -166,19 +165,6 @@ fn read_dir_file(p: &Path) -> Result<Directory> {
     )?)
 }
 
-fn member_key(dir: &Directory, id: &MemberId) -> Result<Vec<u8>> {
-    let m = dir
-        .get(id)
-        .ok_or_else(|| anyhow!("{id} is not in the directory"))?;
-    let pem = m
-        .cert_pem
-        .as_deref()
-        .ok_or_else(|| anyhow!("{id} has no certificate"))?;
-    Ok(pki::inspect_cert_pem(pem)
-        .map_err(|e| anyhow!("{e}"))?
-        .public_key)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().cmd {
@@ -327,9 +313,7 @@ async fn main() -> Result<()> {
                 let when = token.time_ms;
                 match &dir {
                     Some(d) => {
-                        let key = member_key(d, &token.tsa)?;
-                        token
-                            .verify(&key)
+                        d.verify_timestamp(token)
                             .map_err(|e| anyhow!("anchor at entry {seq}: {e}"))?;
                         println!(
                             "anchor at entry {seq}: signature OK ({}, serial {}, time {when} ms)",

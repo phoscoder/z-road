@@ -6,7 +6,7 @@ use zroad_core::audit::AuditEvent;
 use zroad_core::crypto::sha256_hex;
 use zroad_core::id::{ClientId, ServiceId};
 use zroad_core::msg::*;
-use zroad_core::{now_ms, pki, random_id};
+use zroad_core::{now_ms, random_id};
 use zroad_net::api::ErrorBody;
 use zroad_net::{request, NetError};
 
@@ -123,10 +123,10 @@ pub async fn call(st: &AppState, p: &CallParams) -> Result<CallSuccess, CallErro
         content_type: p.content_type.clone(),
         subject: p.subject.clone(),
     };
-    let signed =
-        SignedMessage::sign_async(REQUEST_DOMAIN, &envelope, st.identity().signer.as_ref())
-            .await
-            .map_err(|e| CallError::SignerUnavailable(e.to_string()))?;
+    let signed = st
+        .sign_message(REQUEST_DOMAIN, &envelope)
+        .await
+        .map_err(|e| CallError::SignerUnavailable(e.to_string()))?;
     let request_sha = signed
         .payload_sha256()
         .map_err(|e| CallError::Internal(e.to_string()))?;
@@ -183,9 +183,6 @@ async fn exchange(
     let provider = dir.get_active(&p.service.member).ok_or_else(|| {
         CallError::UnknownProvider(format!("{} is not an active member", p.service.member))
     })?;
-    let provider_info = pki::inspect_cert_pem(provider.cert_pem.as_deref().unwrap_or_default())
-        .map_err(|e| CallError::Internal(format!("bad provider certificate in directory: {e}")))?;
-
     let wire = ExchangeRequest {
         request: signed.clone(),
         body_b64: b64_encode(&p.body),
@@ -226,10 +223,38 @@ async fn exchange(
     }
     let wire: ExchangeResponse = serde_json::from_slice(&resp.body)
         .map_err(|e| CallError::BadResponse(format!("unreadable response: {e}")))?;
-    let envelope: ResponseEnvelope = wire
-        .response
-        .open(RESPONSE_DOMAIN, &provider_info.public_key)
-        .map_err(|e| CallError::BadResponse(e.to_string()))?;
+    let grace_ms = st.cfg.rotation_grace_secs * 1000;
+    let open_any = |keys: &[Vec<u8>]| -> Result<ResponseEnvelope, String> {
+        let mut last = "no key to verify with".to_string();
+        for key in keys {
+            match wire.response.open::<ResponseEnvelope>(RESPONSE_DOMAIN, key) {
+                Ok(e) => return Ok(e),
+                Err(e) => last = e.to_string(),
+            }
+        }
+        Err(last)
+    };
+    let keys = st
+        .dir
+        .snapshot()
+        .recent_keys(&p.service.member, zroad_core::now_ms(), grace_ms);
+    let envelope: ResponseEnvelope = match open_any(&keys) {
+        Ok(e) => e,
+        Err(first) => {
+            // The provider may have rotated its key since our directory copy.
+            st.dir
+                .refresh_throttled(std::time::Duration::from_secs(2))
+                .await;
+            let fresh =
+                st.dir
+                    .snapshot()
+                    .recent_keys(&p.service.member, zroad_core::now_ms(), grace_ms);
+            if fresh == keys {
+                return Err(CallError::BadResponse(first));
+            }
+            open_any(&fresh).map_err(CallError::BadResponse)?
+        }
+    };
     let body = b64_decode(&wire.body_b64).map_err(|e| CallError::BadResponse(e.to_string()))?;
     if envelope.request_id != message_id
         || envelope.request_sha256 != request_sha

@@ -7,7 +7,6 @@ use anyhow::{anyhow, bail, Result};
 use bytes::Bytes;
 use zroad_core::audit::AuditEvent;
 use zroad_core::msg::TimestampToken;
-use zroad_core::pki;
 
 use crate::state::AppState;
 
@@ -30,9 +29,6 @@ pub async fn anchor_once(st: &AppState) -> Result<Option<u64>> {
             st.cfg.tsa_member
         )
     })?;
-    let tsa_key = pki::inspect_cert_pem(tsa.cert_pem.as_deref().unwrap_or_default())
-        .map_err(|e| anyhow!("{e}"))?
-        .public_key;
     let resp = zroad_net::request(
         "POST",
         &format!("{}/v1/timestamp", tsa.endpoint.trim_end_matches('/')),
@@ -49,7 +45,21 @@ pub async fn anchor_once(st: &AppState) -> Result<Option<u64>> {
     if token.digest != hash || token.tsa != st.cfg.tsa_member {
         bail!("timestamp token does not match the request");
     }
-    token.verify(&tsa_key).map_err(|e| anyhow!("{e}"))?;
+    let grace_ms = st.cfg.rotation_grace_secs * 1000;
+    let acceptable = |st: &AppState| {
+        st.dir
+            .snapshot()
+            .recent_keys(&st.cfg.tsa_member, zroad_core::now_ms(), grace_ms)
+    };
+    let mut keys = acceptable(st);
+    if !keys.iter().any(|k| token.verify(k).is_ok()) {
+        // The authority may have rotated its key since our directory copy.
+        st.dir.refresh_throttled(Duration::from_secs(2)).await;
+        keys = acceptable(st);
+        if !keys.iter().any(|k| token.verify(k).is_ok()) {
+            bail!("the timestamp token does not verify with the authority's key");
+        }
+    }
     let entry = st
         .audit
         .append(AuditEvent::Anchor {

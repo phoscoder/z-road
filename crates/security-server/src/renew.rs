@@ -49,13 +49,16 @@ pub async fn renew(st: &AppState) -> Result<String> {
     let signer =
         Arc::new(SoftwareSigner::from_pkcs8_pem(&ident.key_pem).map_err(|e| anyhow!("{e}"))?);
     let tls_client = tls::client_config(&st.ca_pem, Some((&resp.cert_pem, &ident.key_pem)))?;
-    st.server_cert.set(&resp.cert_pem, &ident.key_pem)?;
 
+    // Persist now, switch after peers have had time to learn the new certificate
+    // (the directory lists it already and peers accept the old one meanwhile).
     let dir = &st.cfg.data_dir;
     std::fs::rename(dir.join("key.pem"), dir.join("key.pem.prev"))?;
     std::fs::rename(dir.join("cert.pem"), dir.join("cert.pem.prev"))?;
     write_private(&dir.join("key.pem"), &ident.key_pem)?;
     std::fs::write(dir.join("cert.pem"), &resp.cert_pem)?;
+    tokio::time::sleep(st.cfg.activation_delay()).await;
+    st.server_cert.set(&resp.cert_pem, &ident.key_pem)?;
 
     st.set_identity(Identity {
         signer,

@@ -29,6 +29,34 @@ use zroad_net::central_client::write_private;
 use zroad_net::server::{self, PeerCert, ServerHandle};
 use zroad_net::tls;
 
+/// Renewal behaviour of a running signer.
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// Central server URL. When set, the signer renews the member's key and
+    /// certificate itself before they expire, and its own TLS certificate from
+    /// the private CA it keeps. Without it, renewal is manual.
+    pub central_url: Option<String>,
+    pub renew_before_days: i64,
+    pub check_interval: std::time::Duration,
+    /// Wait this long before the first check (mainly for tests).
+    pub initial_delay: std::time::Duration,
+    /// After renewing, keep signing with the old key for this long so peers and
+    /// the hosting node have learned the new one from the directory.
+    pub activation_delay: std::time::Duration,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            central_url: None,
+            renew_before_days: 30,
+            check_interval: std::time::Duration::from_secs(3600),
+            initial_delay: std::time::Duration::ZERO,
+            activation_delay: std::time::Duration::from_secs(65),
+        }
+    }
+}
+
 pub struct SignerConfig {
     /// Holds `key.pem`, `cert.pem`, `ca.pem` (from `zroad-cli enroll`) and
     /// `tls.pem`, `tls.key` (from [`init`]); the audit log is written here too.
@@ -39,12 +67,14 @@ pub struct SignerConfig {
     /// The only node allowed to ask for signatures.
     pub node: MemberId,
     pub max_per_minute: u32,
+    pub options: Options,
 }
 
 struct App {
     member: MemberId,
     node: MemberId,
-    signer: SoftwareSigner,
+    dir: std::path::PathBuf,
+    signer: std::sync::RwLock<Arc<SoftwareSigner>>,
     audit: AuditLog,
     max_per_minute: u32,
     window: AtomicU64,
@@ -68,7 +98,9 @@ pub fn init(dir: &Path, sans: &[String]) -> Result<()> {
     std::fs::write(dir.join("signer-ca.pem"), &new.ca.cert_pem)?;
     write_private(&dir.join("tls.key"), &ident.key_pem)?;
     std::fs::write(dir.join("tls.pem"), leaf)?;
-    // the CA key is not needed again; it is discarded on purpose
+    // The CA key stays here (private, 0600) so the signer can re-issue its own TLS
+    // certificate without a restart. Delete it to make that renewal manual.
+    write_private(&dir.join("signer-ca.key"), &new.key_pem)?;
     Ok(())
 }
 
@@ -92,7 +124,8 @@ pub async fn spawn(cfg: SignerConfig) -> Result<ServerHandle> {
     let app = Arc::new(App {
         member: cfg.member,
         node: cfg.node,
-        signer,
+        dir: cfg.dir.clone(),
+        signer: std::sync::RwLock::new(Arc::new(signer)),
         audit,
         max_per_minute: cfg.max_per_minute,
         window: AtomicU64::new(0),
@@ -101,12 +134,13 @@ pub async fn spawn(cfg: SignerConfig) -> Result<ServerHandle> {
     // The node authenticates with its Z-Road certificate, so client
     // certificates are verified against the Z-Road CA; the server presents its
     // own certificate from the signer's private CA, which the node pins.
-    let tls_cfg = tls::server_config(
+    let tls_cert = tls::ReloadableCert::new(&read("tls.pem")?, &read("tls.key")?)?;
+    let tls_cfg = tls::server_config_reloadable(
         &read("ca.pem")?,
-        &read("tls.pem")?,
-        &read("tls.key")?,
+        tls_cert.clone(),
         tls::ClientAuth::Required,
     )?;
+    tokio::spawn(renew_loop(Arc::downgrade(&app), tls_cert, cfg.options));
     let router = Router::new()
         .route("/v1/sign", post(sign))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
@@ -240,9 +274,110 @@ async fn sign(
             "cannot record the signature, so it was not made",
         );
     }
-    let sig = Signer::sign(&app.signer, &message);
+    let signer = app.signer.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let sig = Signer::sign(signer.as_ref(), &message);
     Json(SignResponse {
         signature_b64: b64_encode(&sig),
     })
     .into_response()
+}
+
+fn days_left(not_after: i64) -> i64 {
+    (not_after - (now_ms() / 1000) as i64) / 86_400
+}
+
+/// Keep both of the signer's certificates fresh without a restart:
+///
+/// * the member's own signing certificate, renewed through the central server
+///   (needs `central_url`); the new key takes over for later signatures and the
+///   hosting node follows it through the directory;
+/// * the signer's TLS certificate, re-issued locally from the private CA it keeps.
+async fn renew_loop(app: std::sync::Weak<App>, tls_cert: Arc<tls::ReloadableCert>, opts: Options) {
+    tokio::time::sleep(opts.initial_delay).await;
+    loop {
+        let Some(app) = app.upgrade() else { return };
+        if let Some(central) = &opts.central_url {
+            match renew_member_cert(&app, central, opts.renew_before_days, opts.activation_delay)
+                .await
+            {
+                Ok(true) => tracing::info!("{}: signing key and certificate renewed", app.member),
+                Ok(false) => {}
+                Err(e) => tracing::error!("cannot renew the member certificate: {e:#}"),
+            }
+        }
+        match renew_tls_cert(&app, &tls_cert, opts.renew_before_days) {
+            Ok(true) => tracing::info!("signer TLS certificate renewed"),
+            Ok(false) => {}
+            Err(e) => tracing::error!("cannot renew the signer TLS certificate: {e:#}"),
+        }
+        drop(app);
+        tokio::time::sleep(opts.check_interval).await;
+    }
+}
+
+async fn renew_member_cert(
+    app: &App,
+    central_url: &str,
+    renew_before_days: i64,
+    activation_delay: std::time::Duration,
+) -> Result<bool> {
+    let read =
+        |f: &str| std::fs::read_to_string(app.dir.join(f)).with_context(|| format!("reading {f}"));
+    let (key, cert, ca) = (read("key.pem")?, read("cert.pem")?, read("ca.pem")?);
+    let info = pki::inspect_cert_pem(&cert).map_err(|e| anyhow!("{e}"))?;
+    if days_left(info.not_after) >= renew_before_days {
+        return Ok(false);
+    }
+    let sans = pki::cert_sans(&cert).map_err(|e| anyhow!("{e}"))?;
+    let ident = pki::generate_identity(&app.member, &sans).map_err(|e| anyhow!("{e}"))?;
+    let resp =
+        zroad_net::central_client::CentralClient::with_identity(central_url, &ca, &cert, &key)?
+            .renew(&zroad_net::api::RenewRequest {
+                csr_pem: ident.csr_pem,
+            })
+            .await?;
+    let new_signer =
+        Arc::new(SoftwareSigner::from_pkcs8_pem(&ident.key_pem).map_err(|e| anyhow!("{e}"))?);
+    // Persist first, then wait, then switch: the directory lists the new key already,
+    // but peers and the node may not have seen it, so keep signing with the old key
+    // until they have. A crash in between leaves usable files on disk.
+    for f in ["key.pem", "cert.pem"] {
+        let _ = std::fs::rename(app.dir.join(f), app.dir.join(format!("{f}.prev")));
+    }
+    write_private(&app.dir.join("key.pem"), &ident.key_pem)?;
+    std::fs::write(app.dir.join("cert.pem"), &resp.cert_pem)?;
+    tokio::time::sleep(activation_delay).await;
+    *app.signer.write().unwrap_or_else(|p| p.into_inner()) = new_signer;
+    Ok(true)
+}
+
+fn renew_tls_cert(
+    app: &App,
+    tls_cert: &tls::ReloadableCert,
+    renew_before_days: i64,
+) -> Result<bool> {
+    let ca_key = match std::fs::read_to_string(app.dir.join("signer-ca.key")) {
+        Ok(k) => k,
+        Err(_) => return Ok(false), // CA key removed on purpose: renewal is manual
+    };
+    let current = std::fs::read_to_string(app.dir.join("tls.pem"))?;
+    let info = pki::inspect_cert_pem(&current).map_err(|e| anyhow!("{e}"))?;
+    if days_left(info.not_after) >= renew_before_days {
+        return Ok(false);
+    }
+    let ca = CertAuthority::load(
+        &std::fs::read_to_string(app.dir.join("signer-ca.pem"))?,
+        &ca_key,
+    )
+    .map_err(|e| anyhow!("{e}"))?;
+    let sans = pki::cert_sans(&current).map_err(|e| anyhow!("{e}"))?;
+    let me: MemberId = "ZW/SYS/signer".parse().map_err(|e| anyhow!("{e}"))?;
+    let ident = pki::generate_identity(&me, &sans).map_err(|e| anyhow!("{e}"))?;
+    let leaf = ca
+        .sign_csr(&ident.csr_pem, &me, &sans, 365)
+        .map_err(|e| anyhow!("{e}"))?;
+    tls_cert.set(&leaf, &ident.key_pem)?;
+    write_private(&app.dir.join("tls.key"), &ident.key_pem)?;
+    std::fs::write(app.dir.join("tls.pem"), leaf)?;
+    Ok(true)
 }

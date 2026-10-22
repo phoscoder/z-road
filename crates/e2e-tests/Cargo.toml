@@ -15,6 +15,7 @@ workspace = true
 http.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
+tokio-rustls.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 bytes.workspace = true

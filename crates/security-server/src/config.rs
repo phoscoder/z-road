@@ -78,6 +78,9 @@ fn d_timeout() -> u64 {
 fn d_renew() -> i64 {
     30
 }
+fn d_grace() -> u64 {
+    600
+}
 fn d_attempts() -> u32 {
     20
 }
@@ -125,6 +128,20 @@ pub struct Config {
     /// remain. 0 disables automatic renewal (a warning is still logged).
     #[serde(default = "d_renew")]
     pub renew_before_days: i64,
+    /// Wait this long after startup before the first renewal check. Normally 0;
+    /// useful to exercise renewal while traffic is flowing.
+    #[serde(default)]
+    pub renew_initial_delay_secs: u64,
+    /// After a peer renews its certificate, keep accepting its previous certificate
+    /// for this many seconds so traffic is not interrupted while other members'
+    /// directory copies catch up. 0 retires the old certificate immediately.
+    #[serde(default = "d_grace")]
+    pub rotation_grace_secs: u64,
+    /// After getting a new certificate, keep using the old one for this long
+    /// before switching, so every member's directory copy has learned the new one.
+    /// Default: twice the directory refresh interval plus five seconds.
+    #[serde(default)]
+    pub rotation_activation_secs: Option<u64>,
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
     #[serde(default)]
@@ -226,6 +243,14 @@ impl Config {
         Ok(out)
     }
 
+    /// How long to keep using the old certificate after a renewal.
+    pub fn activation_delay(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.rotation_activation_secs
+                .unwrap_or(self.directory_refresh_secs * 2 + 5),
+        )
+    }
+
     pub fn upstream_for(&self, local_key: &str) -> Option<&str> {
         self.services
             .iter()
@@ -289,6 +314,10 @@ struct NodeFile {
     outbox_max_attempts: u32,
     #[serde(default = "d_renew")]
     renew_before_days: i64,
+    #[serde(default = "d_grace")]
+    rotation_grace_secs: u64,
+    #[serde(default)]
+    rotation_activation_secs: Option<u64>,
     members: Vec<NodeMember>,
 }
 
@@ -390,6 +419,9 @@ impl NodeConfig {
                 upstream_timeout_secs: f.upstream_timeout_secs,
                 outbox_max_attempts: f.outbox_max_attempts,
                 renew_before_days: f.renew_before_days,
+                renew_initial_delay_secs: 0,
+                rotation_grace_secs: f.rotation_grace_secs,
+                rotation_activation_secs: f.rotation_activation_secs,
                 services,
                 access: m.access.clone(),
                 remote_signer,
