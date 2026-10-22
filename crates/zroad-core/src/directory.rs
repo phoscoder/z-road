@@ -41,11 +41,18 @@ impl Directory {
 }
 
 /// One published service in the catalogue.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CatalogueEntry {
     pub service: crate::id::ServiceId,
     pub title: String,
     pub description: String,
+    /// JSON Schema the request body must satisfy. Providers enforce it; consumers
+    /// can check against it before sending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_schema: Option<serde_json::Value>,
+    /// JSON Schema describing successful (2xx) answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<serde_json::Value>,
 }
 
 /// Every service offered by an active member. The catalogue says what exists and

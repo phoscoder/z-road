@@ -389,10 +389,21 @@ async fn publish_catalogue(
         if item.title.len() > 100 || item.description.len() > 500 {
             return Err(bad("title (100) or description (500) too long"));
         }
+        for (what, schema) in [
+            ("request", &item.request_schema),
+            ("response", &item.response_schema),
+        ] {
+            if let Some(s) = schema {
+                zroad_core::schema::CompiledSchema::compile(s)
+                    .map_err(|e| bad(format!("{} {what}_schema: {e}", item.id)))?;
+            }
+        }
         entries.push(CatalogueEntry {
             service,
             title: item.title,
             description: item.description,
+            request_schema: item.request_schema,
+            response_schema: item.response_schema,
         });
     }
     let n = entries.len();

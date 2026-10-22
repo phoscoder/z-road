@@ -195,7 +195,7 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 | Access control | Per-service, default-deny rules evaluated by the provider; revocation through the directory |
 | Replay and retries | Per-peer message id cache (rebuilt from the audit log after a restart); identical retries are idempotent |
 | Integration | Plain-HTTP internal API ([OpenAPI](docs/openapi-internal.yaml)), a Rust client library with typed errors, async submit-and-wait and offline proof verification ([guide](docs/integration.md)) |
-| Discovery | A public service catalogue: providers publish what they offer, consumers list it (`zroad-cli catalogue`); access rules stay private |
+| Discovery and contracts | A public service catalogue with a JSON Schema per service request and answer; providers enforce them before anything reaches their system, consumers can check early; access rules stay private |
 | Shared nodes | One security server can host many members with separate keys, logs, tokens and rules ([deployment guide](docs/deployment.md#shared-nodes)); the operator holds the keys |
 | Resilience | Durable async outbox with backoff; cached directory keeps working if the central server is down |
 | Accountability | Hash-chained audit log on both sides, refuses to start on a broken chain, periodic trusted-timestamp anchors |
@@ -212,7 +212,7 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, coverage-guided fuzzing, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
-Not started: member-held keys on shared nodes, request and response schemas in the catalogue, ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
+Not started: member-held keys on shared nodes, ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
 
 ## Documentation
 

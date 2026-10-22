@@ -15,6 +15,18 @@ pub struct ServiceConfig {
     pub title: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// JSON Schema file for request bodies. When set, the security server
+    /// rejects non-conforming requests before they reach the internal system, and
+    /// publishes the schema in the catalogue.
+    #[serde(default)]
+    pub request_schema: Option<PathBuf>,
+    /// JSON Schema file for successful answers.
+    #[serde(default)]
+    pub response_schema: Option<PathBuf>,
+    /// Refuse to deliver answers that violate `response_schema` (default: only
+    /// log a warning).
+    #[serde(default)]
+    pub enforce_response_schema: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -99,6 +111,7 @@ impl Config {
             if cfg.data_dir.is_relative() {
                 cfg.data_dir = base.join(&cfg.data_dir);
             }
+            resolve_schema_paths(&mut cfg.services, base);
         }
         cfg.validate()?;
         Ok(cfg)
@@ -143,6 +156,19 @@ impl Config {
             .filter(|r| r.service == local_key)
             .flat_map(|r| r.allow.iter())
             .any(|p| client_matches(p, client))
+    }
+}
+
+fn resolve_schema_paths(services: &mut [ServiceConfig], base: &Path) {
+    for s in services {
+        for p in [&mut s.request_schema, &mut s.response_schema]
+            .into_iter()
+            .flatten()
+        {
+            if p.is_relative() {
+                *p = base.join(&*p);
+            }
+        }
     }
 }
 
@@ -233,6 +259,8 @@ impl NodeConfig {
         };
         let mut members = Vec::new();
         for m in &f.members {
+            let mut services = m.services.clone();
+            resolve_schema_paths(&mut services, base);
             let cfg = Config {
                 member_id: m.member_id.clone(),
                 data_dir: abs(&m.data_dir),
@@ -249,7 +277,7 @@ impl NodeConfig {
                 upstream_timeout_secs: f.upstream_timeout_secs,
                 outbox_max_attempts: f.outbox_max_attempts,
                 renew_before_days: f.renew_before_days,
-                services: m.services.clone(),
+                services,
                 access: m.access.clone(),
             };
             cfg.validate()

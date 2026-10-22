@@ -44,6 +44,8 @@ pub enum CallError {
         code: String,
         message: String,
     },
+    /// The request does not match the schema the provider published.
+    SchemaViolation(String),
     /// The answer failed verification.
     BadResponse(String),
     Internal(String),
@@ -66,6 +68,7 @@ impl CallError {
             CallError::UnknownProvider(_) => "unknown_provider",
             CallError::Unreachable(_) => "provider_unreachable",
             CallError::Remote { code, .. } => code,
+            CallError::SchemaViolation(_) => "schema_violation",
             CallError::BadResponse(_) => "bad_response",
             CallError::Internal(_) => "internal",
         }
@@ -76,6 +79,7 @@ impl CallError {
             CallError::Invalid(m)
             | CallError::UnknownProvider(m)
             | CallError::Unreachable(m)
+            | CallError::SchemaViolation(m)
             | CallError::BadResponse(m)
             | CallError::Internal(m) => m.clone(),
             CallError::Remote { message, .. } => message.clone(),
@@ -94,6 +98,15 @@ pub async fn call(st: &AppState, p: &CallParams) -> Result<CallSuccess, CallErro
         return Err(CallError::Invalid(
             "Z-Road-Subject is longer than 256 bytes".into(),
         ));
+    }
+    // Fail fast against the published schema, if we know it. The provider
+    // enforces it again, so this is a convenience and not a control.
+    if zroad_core::schema::is_json_content_type(&p.content_type) {
+        if let Some(schema) = st.dir.request_schema(&p.service) {
+            if let Err(errors) = schema.check_bytes(&p.body) {
+                return Err(CallError::SchemaViolation(errors.join("; ")));
+            }
+        }
     }
     let message_id = p.message_id.clone().unwrap_or_else(random_id);
     let envelope = RequestEnvelope {

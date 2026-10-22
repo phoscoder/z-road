@@ -52,6 +52,10 @@ pub struct CatalogueItem {
     pub id: String,
     pub title: String,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_schema: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<serde_json::Value>,
 }
 
 /// Replaces everything the calling member has published.

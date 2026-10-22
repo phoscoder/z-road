@@ -47,6 +47,7 @@ assurance for a production deployment.
 | Stolen admin token | Constant-time comparison, minimum length. | Bearer tokens in config files are weak. Prefer a secrets manager and per-operator credentials. |
 | Malicious internal caller | Optional `internal_token`. The client must belong to this member. | Anyone who can reach the internal port can act as any of the member's subsystems. Bind it to localhost or a private network. |
 | Supply chain | Small dependency set from well-known crates; `unsafe` is forbidden in this workspace; CI runs clippy with `-D warnings` and `cargo audit` (weekly too). `Cargo.lock` is committed. | No `cargo vet`; no reproducible builds; no signed releases. |
+| Malformed or malicious request bodies reaching a provider's system | Optional per-service JSON Schema enforced by the provider's security server before forwarding, with a size cap, no external `$ref` resolution, and a startup failure if a schema cannot be loaded. | Schemas check structure, not meaning, and only exist where a provider writes one. A pathological schema is a CPU risk for whoever compiles it; schemas are size-capped but not otherwise bounded. |
 | Malformed input | Strict parsing; identifier grammar rejects `..`, `/` and whitespace in segments; hashes and signatures checked before use; a randomised test feeds garbage to every parser and verifier and requires an error, never a panic. | No coverage-guided fuzzing yet. |
 
 ## Shared nodes

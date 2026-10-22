@@ -92,6 +92,33 @@ disappear. The catalogue says what exists and who offers it, never who may use
 it: access rules stay private to each provider. Security servers publish at
 startup and hourly, or on demand with `POST /admin/v1/catalogue/publish`.
 
+## 4b. Schemas
+
+A service can declare a **request schema** and a **response schema** (JSON Schema,
+draft 2020-12 or earlier, at most 64 KiB each, no external `$ref`s: nothing is
+ever fetched). They are published in the catalogue together with the service.
+
+* **Provider side (enforced).** A provider with a request schema checks every
+  incoming body *after* authentication and access control and *before* it reaches
+  its internal system. A body that does not conform is refused with
+  `schema_violation` (400) and a list of up to five violations; a non-JSON
+  content type is refused with `unsupported_media_type` (415). Refusals are
+  audit-logged (`denied:schema_violation`) and nothing reaches the internal
+  system. A response schema is checked against successful (2xx) answers: a
+  violation is logged as a warning, or with `enforce_response_schema = true` the
+  answer is withheld and the consumer gets `upstream_schema_violation` (502).
+* **Consumer side (convenience).** A consumer's security server learns request
+  schemas from the catalogue (refreshed with the directory) and rejects a
+  non-conforming request locally with `schema_violation` (400) before sending.
+  The provider enforces the schema again, so this is never the control.
+* **Central server.** Refuses to publish a schema that does not compile or is too
+  large.
+* A schema file that cannot be read or compiled stops a security server from
+  starting, rather than letting the service run unvalidated.
+
+Validation covers structure and types, not meaning: a schema cannot tell whether a
+TIN exists, and it is not a substitute for the internal system's own checks.
+
 ## 5. Transport
 
 Provider security servers listen for `POST /zroad/v1/exchange` over TLS with
@@ -257,4 +284,4 @@ token is issued so they are never reused.
 * Verifying old proofs after a certificate rotation (the offline check uses the key in the current directory).
 * Federation between several Z-Road instances or with other X-Road deployments.
 * Streaming and large-object transfer (bodies are capped, default 2 MiB).
-* Machine-readable request and response schemas in the catalogue.
+* Schemas for non-JSON content types.

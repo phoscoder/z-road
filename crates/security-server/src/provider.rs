@@ -316,6 +316,24 @@ async fn process(
         ));
     }
 
+    // Structural validation: nothing malformed reaches the internal system.
+    if let Some((_, schema)) = st.schemas.get(&local).and_then(|s| s.request.as_ref()) {
+        if !zroad_core::schema::is_json_content_type(&env.content_type) {
+            return Err(reject(
+                S::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_media_type",
+                "this service only accepts JSON",
+            ));
+        }
+        if let Err(errors) = schema.check_bytes(&body) {
+            return Err(reject(
+                S::BAD_REQUEST,
+                "schema_violation",
+                errors.join("; "),
+            ));
+        }
+    }
+
     // Duplicate and replay handling.
     let key = format!("{}|{}", a.peer, env.message_id);
     let fingerprint = (a.client.clone(), a.service.clone(), env.body_sha256.clone());
@@ -412,6 +430,29 @@ async fn process(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/json")
         .to_string();
+    if (200..300).contains(&up.status) {
+        if let Some(sch) = st.schemas.get(&local) {
+            if let Some((_, schema)) = &sch.response {
+                if let Err(errors) = schema.check_bytes(&up.body) {
+                    tracing::warn!(
+                        "answer of {local} violates its response schema: {}",
+                        errors.join("; ")
+                    );
+                    if sch.enforce_response {
+                        st.dedupe
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&key);
+                        return Err(reject(
+                            S::BAD_GATEWAY,
+                            "upstream_schema_violation",
+                            "the provider's system returned an answer that does not match its published schema",
+                        ));
+                    }
+                }
+            }
+        }
+    }
     let (resp, sha) = sign_response(st, &env, &a.request_sha, up.status, &up.body, &content_type)?;
     {
         let mut map = st.dedupe.lock().unwrap_or_else(|p| p.into_inner());

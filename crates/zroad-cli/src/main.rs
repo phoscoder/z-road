@@ -61,6 +61,9 @@ enum Cmd {
     Catalogue {
         #[command(flatten)]
         central: Central,
+        /// Also print each service's request and response JSON Schemas.
+        #[arg(long)]
+        schemas: bool,
     },
     /// Generate a key, enrol with the central server and store the identity.
     Enroll {
@@ -171,7 +174,7 @@ async fn main() -> Result<()> {
             let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
             println!("{}", serde_json::to_string_pretty(&c.directory().await?)?);
         }
-        Cmd::Catalogue { central } => {
+        Cmd::Catalogue { central, schemas } => {
             let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
             let cat = c.catalogue().await?;
             if cat.entries.is_empty() {
@@ -181,6 +184,22 @@ async fn main() -> Result<()> {
                 println!("{}\n    {}", e.service, e.title);
                 if !e.description.is_empty() {
                     println!("    {}", e.description);
+                }
+                let has = |s: &Option<serde_json::Value>| if s.is_some() { "yes" } else { "no" };
+                println!(
+                    "    request schema: {}, response schema: {}",
+                    has(&e.request_schema),
+                    has(&e.response_schema)
+                );
+                if schemas {
+                    for (name, s) in [
+                        ("request", &e.request_schema),
+                        ("response", &e.response_schema),
+                    ] {
+                        if let Some(s) = s {
+                            println!("    {name} schema:\n{}", serde_json::to_string_pretty(s)?);
+                        }
+                    }
                 }
             }
         }

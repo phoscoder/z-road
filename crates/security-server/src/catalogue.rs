@@ -19,6 +19,16 @@ pub async fn publish(st: &AppState) -> Result<usize> {
             id: s.id.clone(),
             title: s.title.clone().unwrap_or_else(|| s.id.clone()),
             description: s.description.clone().unwrap_or_default(),
+            request_schema: st
+                .schemas
+                .get(&s.id)
+                .and_then(|x| x.request.as_ref())
+                .map(|(v, _)| v.clone()),
+            response_schema: st
+                .schemas
+                .get(&s.id)
+                .and_then(|x| x.response.as_ref())
+                .map(|(v, _)| v.clone()),
         })
         .collect();
     let n = services.len();

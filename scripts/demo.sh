@@ -62,6 +62,9 @@ anchor_interval_secs = 5
 id = "tax-clearance/verify/v1"
 upstream = "http://127.0.0.1:9001/verify"
 title = "Tax clearance check"
+request_schema = "$ROOT/examples/zimra-clearance/schemas/verify.request.json"
+response_schema = "$ROOT/examples/zimra-clearance/schemas/verify.response.json"
+enforce_response_schema = true
 description = "Is this TIN cleared? Returns status and expiry only."
 
 [[access]]
@@ -90,6 +93,12 @@ sleep 1   # let the services publish their catalogue entries
 echo
 echo "==> what is on offer? (the public service catalogue)"
 "$CLI" catalogue --central $CENTRAL --ca "$CA"
+echo
+echo "==> a malformed request is rejected before it reaches ZIMRA's system"
+curl -s -X POST http://127.0.0.1:7001/r1/ZW/GOV/ZIMRA/tax-clearance/verify/v1 \
+  -H 'Z-Road-Client: ZW/COM/12345678/accounts-payable' -H 'Content-Type: application/json' \
+  -d '{"tin":"not-a-tin"}'
+echo
 echo
 echo "==> buyer checks a valid supplier"
 "$BIN/buyer-client" --tin 2000123456 --proof-out "$WORK/proof.json"

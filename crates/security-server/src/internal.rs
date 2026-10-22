@@ -199,7 +199,7 @@ async fn call(
         }
         Err(e) => {
             let status = match &e {
-                CallError::Invalid(_) => StatusCode::BAD_REQUEST,
+                CallError::Invalid(_) | CallError::SchemaViolation(_) => StatusCode::BAD_REQUEST,
                 CallError::UnknownProvider(_) => StatusCode::NOT_FOUND,
                 CallError::Unreachable(_) => StatusCode::SERVICE_UNAVAILABLE,
                 CallError::Remote { status, .. } => {

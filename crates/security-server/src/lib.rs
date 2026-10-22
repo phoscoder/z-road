@@ -234,7 +234,9 @@ async fn build_member(
     let proofs_dir = dir.join("proofs");
     std::fs::create_dir_all(&proofs_dir)?;
     let dedupe = seed_dedupe(&audit_path, &cfg);
+    let schemas = load_schemas(&cfg)?;
     Ok(Arc::new(AppState {
+        schemas,
         ca_pem: ca.clone(),
         identity: AppState::new_identity_lock(state::Identity {
             signer: Arc::new(SoftwareSigner::from_pkcs8_pem(&key).map_err(|e| anyhow!("{e}"))?),
@@ -287,4 +289,30 @@ fn seed_dedupe(path: &std::path::Path, cfg: &Config) -> HashMap<String, state::D
         }
     }
     map
+}
+
+/// Load and compile the schemas named in the config. A schema that cannot be
+/// read or compiled stops startup: a service that silently runs unvalidated
+/// would be worse than one that does not start.
+fn load_schemas(cfg: &Config) -> Result<HashMap<String, state::ServiceSchemas>> {
+    let load = |path: &Option<std::path::PathBuf>| -> Result<Option<(serde_json::Value, zroad_core::schema::CompiledSchema)>> {
+        let Some(p) = path else { return Ok(None) };
+        let text = std::fs::read_to_string(p).with_context(|| format!("reading schema {}", p.display()))?;
+        let value: serde_json::Value = serde_json::from_str(&text).with_context(|| format!("parsing schema {}", p.display()))?;
+        let compiled = zroad_core::schema::CompiledSchema::compile(&value)
+            .map_err(|e| anyhow!("schema {}: {e}", p.display()))?;
+        Ok(Some((value, compiled)))
+    };
+    let mut out = HashMap::new();
+    for s in &cfg.services {
+        out.insert(
+            s.id.clone(),
+            state::ServiceSchemas {
+                request: load(&s.request_schema)?,
+                response: load(&s.response_schema)?,
+                enforce_response: s.enforce_response_schema,
+            },
+        );
+    }
+    Ok(out)
 }

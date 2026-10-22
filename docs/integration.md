@@ -29,6 +29,16 @@ things to handle:
 Keep the `Z-Road-Proof` response header (or fetch it later by message id) if you
 may need to prove what was answered and when.
 
+## Schemas: the contract
+
+Providers publish a JSON Schema for each service's request and answer in the
+catalogue (`zroad-cli catalogue --schemas`). Generate types from them, or at least
+test against them. A request that does not conform is refused with
+`schema_violation` (HTTP 400, never retryable) and a message such as
+`/tin: "abc" does not match "^[0-9]{10}$"`; your own security server refuses it
+locally once it has seen the schema, and the provider enforces it regardless.
+Schemas describe structure only; business rules still live in the provider's system.
+
 ## When the provider might be down
 
 Add `Z-Road-Mode: async`. You get `202` and a message id immediately; your

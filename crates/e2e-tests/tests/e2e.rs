@@ -1112,6 +1112,8 @@ async fn catalogue_lists_services_of_active_members() {
             id: "x/y/v1".into(),
             title: "t".into(),
             description: "d".into(),
+            request_schema: None,
+            response_schema: None,
         }],
     };
     assert!(public.publish_catalogue(&anon).await.is_err());
@@ -1261,4 +1263,143 @@ async fn rust_client_library() {
             .await,
         Err(ClientError::Unreachable(_))
     ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn schemas_are_published_and_enforced() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+
+    let schemas = net.tmp.path().join("schemas");
+    std::fs::create_dir_all(&schemas).unwrap();
+    let req = schemas.join("req.json");
+    let res = schemas.join("res.json");
+    std::fs::write(
+        &req,
+        json!({
+            "type": "object", "required": ["tin"], "additionalProperties": false,
+            "properties": { "tin": { "type": "string", "pattern": "^[0-9]{10}$" } }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // deliberately narrow: only VALID answers conform
+    std::fs::write(
+        &res,
+        json!({
+            "type": "object", "required": ["tin", "status"],
+            "properties": { "status": { "enum": ["VALID"] } }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // A broken schema file stops startup instead of silently running unvalidated.
+    let mut broken = net.config(&zimra, true);
+    broken.services[0].request_schema = Some(schemas.join("missing.json"));
+    assert!(security_server::spawn(broken).await.is_err());
+    let bad = schemas.join("bad.json");
+    std::fs::write(&bad, r#"{"type":"nonsense"}"#).unwrap();
+    let mut invalid = net.config(&zimra, true);
+    invalid.services[0].request_schema = Some(bad);
+    assert!(security_server::spawn(invalid).await.is_err());
+
+    let mut cfg = net.config(&zimra, true);
+    cfg.services[0].request_schema = Some(req);
+    cfg.services[0].response_schema = Some(res);
+    cfg.services[0].enforce_response_schema = true;
+    let _z = security_server::spawn(cfg).await.unwrap();
+    let _b = net.run(&buyer, false).await;
+
+    // The schemas appear in the public catalogue.
+    let public = CentralClient::new(&net.central_url, &net.ca_pem).unwrap();
+    let mut entry = None;
+    for _ in 0..20 {
+        entry = public.catalogue().await.unwrap().entries.into_iter().next();
+        if entry.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let entry = entry.expect("catalogue entry");
+    assert!(entry.request_schema.is_some() && entry.response_schema.is_some());
+
+    // The central server refuses a schema that does not compile.
+    let read = |f: &str| std::fs::read_to_string(buyer.dir.join(f)).unwrap();
+    let as_buyer = CentralClient::with_identity(
+        &net.central_url,
+        &read("ca.pem"),
+        &read("cert.pem"),
+        &read("key.pem"),
+    )
+    .unwrap();
+    let bad_item = zroad_net::api::PublishCatalogueRequest {
+        services: vec![zroad_net::api::CatalogueItem {
+            id: "a/b/v1".into(),
+            title: "t".into(),
+            description: "d".into(),
+            request_schema: Some(json!({ "type": "nonsense" })),
+            response_schema: None,
+        }],
+    };
+    assert!(as_buyer.publish_catalogue(&bad_item).await.is_err());
+
+    // Provider side, bypassing the consumer's own check: malformed bodies never
+    // reach the internal system.
+    let raw = RawClient::new(&buyer, &zimra);
+    for body in [
+        &br#"{"tin":"abc"}"#[..],
+        br#"{"tin":"2000123456","x":1}"#,
+        br#"{}"#,
+        b"not json",
+    ] {
+        let (s, v) = raw
+            .send(&raw.envelope(&random_id(), body), body, None)
+            .await;
+        assert_eq!(
+            (s, v["error"].as_str().unwrap()),
+            (400, "schema_violation"),
+            "{body:?}"
+        );
+    }
+    let body = br#"{"tin":"2000123456"}"#;
+    let mut env = raw.envelope(&random_id(), body);
+    env.content_type = "text/plain".into();
+    let (s, v) = raw.send(&env, body, None).await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (415, "unsupported_media_type")
+    );
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        raw.send(&raw.envelope(&random_id(), body), body, None)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), 1);
+
+    // Consumer side: once the catalogue has reached the buyer's security server,
+    // a bad request fails fast without leaving the building.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let before = net.upstream_calls.load(Ordering::SeqCst);
+    let (s, v, _) = clearance(&buyer, "ZW/COM/12345678/ap", "not-a-tin").await;
+    assert_eq!((s, v["error"].as_str().unwrap()), (400, "schema_violation"));
+    assert!(v["message"].as_str().unwrap().contains("/tin"), "{v}");
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), before);
+    assert_eq!(
+        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
+            .await
+            .0,
+        200
+    );
+
+    // Response enforcement: an answer outside the published schema is not delivered.
+    let (s, v, _) = clearance(&buyer, "ZW/COM/12345678/ap", "2000000000").await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (502, "upstream_schema_violation"),
+        "{v}"
+    );
 }
