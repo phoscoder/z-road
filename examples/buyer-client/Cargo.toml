@@ -1,0 +1,19 @@
+[package]
+name = "buyer-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Example consumer: checks a supplier tax clearance through a Z-Road security server"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+zroad-core.workspace = true
+zroad-net.workspace = true

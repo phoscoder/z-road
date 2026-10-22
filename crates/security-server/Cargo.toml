@@ -1,0 +1,33 @@
+[package]
+name = "security-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Z-Road security server"
+
+[lints]
+workspace = true
+
+[lib]
+name = "security_server"
+
+[[bin]]
+name = "security-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+bytes.workspace = true
+clap.workspace = true
+http.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+zroad-core.workspace = true
+zroad-net.workspace = true

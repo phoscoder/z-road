@@ -1,0 +1,29 @@
+[package]
+name = "central-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Z-Road central server: certificate authority and member directory"
+
+[lints]
+workspace = true
+
+[lib]
+name = "central_server"
+
+[[bin]]
+name = "central-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+zroad-core.workspace = true
+zroad-net.workspace = true
