@@ -6,7 +6,7 @@
 //! that state at that time.
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
@@ -159,17 +159,34 @@ pub fn verify_file(path: &Path) -> Result<VerifyReport> {
     })
 }
 
+/// The part of a log file made of complete (newline-terminated) lines. A final
+/// fragment without a newline is an append that was cut short (a crash, or a reader
+/// looking at the file mid-write); it was never acknowledged, so it is not an entry.
+fn complete_prefix(bytes: &[u8]) -> &[u8] {
+    match bytes.iter().rposition(|b| *b == b'\n') {
+        Some(i) => &bytes[..=i],
+        None => &[],
+    }
+}
+
 pub fn read_entries(path: &Path) -> Result<Vec<AuditEntry>> {
-    let f = match File::open(path) {
-        Ok(f) => f,
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
-    BufReader::new(f)
-        .lines()
-        .filter(|l| l.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(true))
-        .map(|l| Ok(serde_json::from_str(&l?)?))
+    complete_prefix(&bytes)
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.iter().all(u8::is_ascii_whitespace))
+        .map(|l| Ok(serde_json::from_slice(l)?))
         .collect()
+}
+
+fn tracing_note(path: &Path, bytes: usize) {
+    eprintln!(
+        "audit log {}: discarded {bytes} byte(s) of an interrupted final write",
+        path.display()
+    );
 }
 
 struct State {
@@ -194,6 +211,17 @@ impl AuditLog {
             std::fs::create_dir_all(dir)?;
         }
         let report = verify_file(path)?;
+        // Drop an interrupted final append so new entries start on a clean line.
+        if let Ok(bytes) = std::fs::read(path) {
+            let keep = complete_prefix(&bytes).len();
+            if keep < bytes.len() {
+                tracing_note(path, bytes.len() - keep);
+                OpenOptions::new()
+                    .write(true)
+                    .open(path)?
+                    .set_len(keep as u64)?;
+            }
+        }
         let file = OpenOptions::new().create(true).append(true).open(path)?;
         let log = Self {
             path: path.to_path_buf(),
@@ -266,6 +294,35 @@ impl AuditLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_interrupted_final_write_is_not_an_entry_and_does_not_block_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("log.jsonl");
+        let log = AuditLog::open(&p).unwrap();
+        for n in 0..3 {
+            log.append(ex(n)).unwrap();
+        }
+        drop(log);
+        // a crash halfway through the next append
+        let mut f = OpenOptions::new().append(true).open(&p).unwrap();
+        f.write_all(b"{\"seq\":5,\"ts_ms\":1,\"prev_hash\":\"abc")
+            .unwrap();
+        drop(f);
+        // readers ignore the fragment
+        assert_eq!(verify_file(&p).unwrap().entries, 4);
+        // the server can start, discards it, and the chain carries on
+        let log = AuditLog::open(&p).unwrap();
+        log.append(ex(9)).unwrap();
+        drop(log);
+        assert_eq!(verify_file(&p).unwrap().entries, 6);
+        // but a complete, corrupted line is still tampering
+        let mut f = OpenOptions::new().append(true).open(&p).unwrap();
+        f.write_all(b"not json\n").unwrap();
+        drop(f);
+        assert!(verify_file(&p).is_err());
+        assert!(AuditLog::open(&p).is_err());
+    }
 
     fn ex(n: u32) -> AuditEvent {
         AuditEvent::Exchange {

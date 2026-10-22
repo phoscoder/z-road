@@ -1,0 +1,43 @@
+[Unit]
+Description=Z-Road central server (certificate authority and member directory)
+Documentation=https://github.com/phoscoder/z-road/blob/main/docs/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zroad
+Group=zroad
+ExecStart=/usr/local/bin/central-server run --dir /var/lib/zroad/central --listen 0.0.0.0:8443
+Restart=on-failure
+RestartSec=5
+StateDirectory=zroad/central
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/zroad/central
+# Hardening: no new privileges, read-only system, private /tmp, no devices, no
+# kernel tunables, only network sockets, no executable memory tricks.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

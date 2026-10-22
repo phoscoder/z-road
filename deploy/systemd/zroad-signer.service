@@ -1,0 +1,44 @@
+[Unit]
+Description=Z-Road signer service (a hosted member's own signing key)
+Documentation=https://github.com/phoscoder/z-road/blob/main/docs/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zroad
+Group=zroad
+# Edit --member and --node. --central lets the signer renew the member's key by itself.
+ExecStart=/usr/local/bin/signer-service run --dir /var/lib/zroad/signer --listen 0.0.0.0:9443 --member ZW/COM/12345678 --node ZW/NODE/example-hosting --central https://central.example.zw:8443
+Restart=on-failure
+RestartSec=5
+StateDirectory=zroad/signer
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/zroad/signer
+# Hardening: no new privileges, read-only system, private /tmp, no devices, no
+# kernel tunables, only network sockets, no executable memory tricks.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

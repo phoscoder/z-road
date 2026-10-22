@@ -14,6 +14,8 @@ two security servers on localhost, makes two clearance checks, verifies the sign
 proof offline, shows the citizen's access view and verifies the timestamped audit
 log. Everything lives under `/tmp/zroad-demo`.
 
+For a ready-made setup see [packaging.md](packaging.md) (Docker Compose for a demo network, systemd units for a real node).
+
 ## Setting up a network by hand
 
 ### 1. The central server (authority)

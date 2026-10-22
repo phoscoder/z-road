@@ -1,0 +1,133 @@
+# A complete local Z-Road network in containers:
+#
+#   central ── tsa                       authority: CA, directory, timestamps
+#   zimra-ss ── zimra-system             provider: ZIMRA security server + mock tax system
+#   buyer-ss  (+ buyer-client)           consumer: a company's security server
+#   citizen-portal                       demo "who looked at my data" page
+#
+#   docker compose -f deploy/docker-compose.yml up --build --wait
+#   docker compose -f deploy/docker-compose.yml run --rm buyer-client
+#
+# This is a DEMO network: one bootstrap step creates every identity in one volume. A real
+# deployment has each organisation generate its own keys on its own machine (see
+# docs/deployment.md). Written without a Docker daemon to hand; see docs/packaging.md.
+name: zroad
+
+x-zroad: &zroad
+  image: zroad:local
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  init: true
+  restart: unless-stopped
+  user: "10001:10001"
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  volumes:
+    - zroad-data:/data
+
+services:
+  # One-shot: create the CA, enrol the members, write configs and tokens into the volume.
+  init:
+    <<: *zroad
+    user: "0:0"
+    restart: "no"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    environment:
+      OWNER: "10001:10001"
+    command: ["zroad-bootstrap"]
+
+  central:
+    <<: *zroad
+    command: ["central-server", "run", "--dir", "/data/central", "--listen", "0.0.0.0:8443"]
+    depends_on:
+      init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8443'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  tsa:
+    <<: *zroad
+    command:
+      - timestamp-service
+      - --dir=/data/tsa
+      - --listen=0.0.0.0:8445
+      - --central=https://central:8443
+    depends_on:
+      central: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8445'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  zimra-system:
+    <<: *zroad
+    command: ["zimra-clearance", "--listen", "0.0.0.0:9001"]
+    depends_on:
+      init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/9001'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  zimra-ss:
+    <<: *zroad
+    command: ["security-server", "run", "--config", "/data/zimra.toml"]
+    depends_on:
+      central: { condition: service_healthy }
+      tsa: { condition: service_healthy }
+      zimra-system: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:7002/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  buyer-ss:
+    <<: *zroad
+    command: ["security-server", "run", "--config", "/data/buyer.toml"]
+    depends_on:
+      central: { condition: service_healthy }
+      tsa: { condition: service_healthy }
+      zimra-ss: { condition: service_healthy }
+    # the internal API is for the company's own systems: bound to this machine only
+    ports:
+      - "127.0.0.1:7001:7001"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:7001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  citizen-portal:
+    <<: *zroad
+    # DEMO ONLY: this portal vouches for whatever identifier is typed (--demo-idp-key).
+    entrypoint: ["bash", "-c", "exec citizen-portal --listen 0.0.0.0:9100 --security-server http://zimra-ss:7002 --portal-token \"$$(cat /data/secrets/citizen-portal.token)\" --provider ZW/GOV/ZIMRA --demo-idp-key /data/secrets/demo-idp.key"]
+    depends_on:
+      zimra-ss: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:9100:9100"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:9100/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # docker compose run --rm buyer-client            (runs a clearance check and prints the answer)
+  buyer-client:
+    <<: *zroad
+    profiles: ["demo"]
+    restart: "no"
+    command: ["buyer-client", "--security-server", "http://buyer-ss:7001", "--tin", "2000123456"]
+    depends_on:
+      buyer-ss: { condition: service_healthy }
+
+volumes:
+  zroad-data:
