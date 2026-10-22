@@ -10,7 +10,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use zroad_core::crypto::{ct_eq, sha256_hex};
 use zroad_core::directory::{Directory, MemberRecord, MemberStatus};
@@ -19,7 +19,7 @@ use zroad_core::pki::{self, CertAuthority};
 use zroad_core::{now_ms, random_secret};
 use zroad_net::api::*;
 use zroad_net::central_client::write_private;
-use zroad_net::server::{self, ServerHandle};
+use zroad_net::server::{self, PeerCert, ServerHandle};
 use zroad_net::tls;
 
 const CERT_VALID_DAYS: i64 = 365;
@@ -84,11 +84,17 @@ pub async fn spawn(dir: &Path, addr: &str) -> Result<ServerHandle> {
         state: Mutex::new(state),
         state_path: dir.join("state.json"),
     });
-    let tls_cfg = tls::server_config(&ca_pem, &read("server.pem")?, &read("server.key")?, false)?;
+    let tls_cfg = tls::server_config(
+        &ca_pem,
+        &read("server.pem")?,
+        &read("server.key")?,
+        tls::ClientAuth::Optional,
+    )?;
     let router = Router::new()
         .route("/v1/ca", get(get_ca))
         .route("/v1/directory", get(get_directory))
         .route("/v1/enroll", post(enroll))
+        .route("/v1/renew", post(renew))
         .route("/v1/admin/members", post(add_member))
         .route("/v1/admin/revoke", post(revoke))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
@@ -269,4 +275,49 @@ async fn revoke(
     st.version += 1;
     save(&app.state_path, &st).map_err(internal)?;
     Ok(Json(serde_json::json!({ "revoked": req.member_id })))
+}
+
+/// Issue a fresh certificate to an active member that proves possession of its
+/// current one over mutual TLS. The old certificate stops being accepted by
+/// peers as soon as they refresh their directory.
+async fn renew(
+    State(app): State<Arc<App>>,
+    Extension(peer): Extension<Option<PeerCert>>,
+    Json(req): Json<RenewRequest>,
+) -> ApiResult<EnrollResponse> {
+    let denied = || {
+        ApiError(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "renewal needs the member's current, valid certificate".into(),
+        )
+    };
+    let peer = peer.ok_or_else(denied)?;
+    let info = pki::inspect_cert_der(&peer.0).map_err(|_| denied())?;
+    let mut st = app.state.lock().unwrap_or_else(|p| p.into_inner());
+    let idx = st
+        .members
+        .iter()
+        .position(|m| m.id == info.member && m.status == MemberStatus::Active)
+        .ok_or_else(denied)?;
+    let registered = st.members[idx]
+        .cert_pem
+        .as_deref()
+        .and_then(|p| pki::inspect_cert_pem(p).ok())
+        .ok_or_else(denied)?;
+    if registered.fingerprint != info.fingerprint {
+        return Err(denied());
+    }
+    let host = endpoint_host(&st.members[idx].endpoint)?;
+    let cert_pem = app
+        .ca
+        .sign_csr(&req.csr_pem, &info.member, &[host], CERT_VALID_DAYS)
+        .map_err(|e| bad(e.to_string()))?;
+    st.members[idx].cert_pem = Some(cert_pem.clone());
+    st.version += 1;
+    save(&app.state_path, &st).map_err(internal)?;
+    Ok(Json(EnrollResponse {
+        cert_pem,
+        ca_pem: app.ca.cert_pem.clone(),
+    }))
 }

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 4 * * 1'   # weekly, to catch newly published advisories
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,3 +25,13 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (unit and end-to-end)
         run: cargo test --workspace
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Check dependencies for known vulnerabilities
+        run: cargo audit

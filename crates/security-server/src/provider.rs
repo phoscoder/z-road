@@ -41,7 +41,7 @@ struct Attempt {
     subject_ref: Option<String>,
 }
 
-const DEDUPE_TTL_MS: u64 = 15 * 60 * 1000;
+pub const DEDUPE_TTL_MS: u64 = 15 * 60 * 1000;
 const DEDUPE_MAX: usize = 100_000;
 
 pub async fn exchange(
@@ -273,6 +273,13 @@ async fn process(
             }
         }
         if let Some(e) = map.get(&key).filter(|e| e.expires_ms > now) {
+            if matches!(e.state, DedupeState::Processed) {
+                return Err(reject(
+                    S::CONFLICT,
+                    "already_processed",
+                    "this message id was already answered before a restart; send a new message",
+                ));
+            }
             if e.fingerprint != fingerprint {
                 return Err(reject(
                     S::CONFLICT,
@@ -297,6 +304,7 @@ async fn process(
                         sign_response(st, &env, &a.request_sha, *status, body, content_type)?;
                     return Ok((resp, *status, sha, true));
                 }
+                DedupeState::Processed => unreachable!("handled above"),
             }
         }
         map.insert(

@@ -39,3 +39,9 @@ pub struct ErrorBody {
     pub error: String,
     pub message: String,
 }
+
+/// Certificate renewal: the member authenticates with its current certificate.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RenewRequest {
+    pub csr_pem: String,
+}

@@ -1,0 +1,20 @@
+[package]
+name = "citizen-portal"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Example: a 'who looked at my data' page backed by a provider's security server"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+bytes.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+zroad-core.workspace = true
+zroad-net.workspace = true

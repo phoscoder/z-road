@@ -145,6 +145,8 @@ pub struct CertInfo {
     pub member: MemberId,
     pub public_key: Vec<u8>,
     pub fingerprint: String,
+    /// End of validity, Unix seconds.
+    pub not_after: i64,
 }
 
 pub fn cert_pem_to_der(pem: &str) -> Result<Vec<u8>> {
@@ -169,6 +171,7 @@ pub fn inspect_cert_der(der: &[u8]) -> Result<CertInfo> {
             .data
             .to_vec(),
         fingerprint: sha256_hex(der),
+        not_after: cert.validity().not_after.timestamp(),
     })
 }
 

@@ -72,6 +72,17 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Replace this member's certificate and key (while the old one is still
+    /// valid), then restart the security server.
+    Renew {
+        #[arg(long)]
+        central: String,
+        /// The directory holding key.pem, cert.pem and ca.pem.
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long = "san", required = true)]
+        sans: Vec<String>,
+    },
     /// Verify an audit log: hash chain and, with a directory, timestamp anchors.
     AuditVerify {
         #[arg(long)]
@@ -172,6 +183,10 @@ async fn main() -> Result<()> {
             )
             .await?;
             println!("enrolled {id}; identity written to {}", out.display());
+        }
+        Cmd::Renew { central, dir, sans } => {
+            let id = zroad_net::central_client::renew_in_dir(&central, &dir, &sans).await?;
+            println!("renewed {id}; restart its security server to use the new certificate");
         }
         Cmd::AuditVerify { log, directory } => {
             let report = audit::verify_file(&log).map_err(|e| anyhow!("{e}"))?;

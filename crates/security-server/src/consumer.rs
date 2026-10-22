@@ -53,7 +53,9 @@ impl CallError {
     pub fn retryable(&self) -> bool {
         match self {
             CallError::Unreachable(_) => true,
-            CallError::Remote { status, .. } => matches!(*status, 429 | 502 | 503 | 504 | 409),
+            CallError::Remote { status, code, .. } => {
+                matches!(*status, 429 | 502 | 503 | 504) || code == "in_flight"
+            }
             _ => false,
         }
     }

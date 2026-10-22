@@ -31,6 +31,19 @@ impl CentralClient {
         })
     }
 
+    /// Like [`new`](Self::new) but presents a member certificate (needed to renew).
+    pub fn with_identity(
+        base_url: &str,
+        ca_pem: &str,
+        cert_pem: &str,
+        key_pem: &str,
+    ) -> Result<Self> {
+        Ok(Self {
+            base: base_url.trim_end_matches('/').to_string(),
+            tls: tls::client_config(ca_pem, Some((cert_pem, key_pem)))?,
+        })
+    }
+
     async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
@@ -109,6 +122,10 @@ impl CentralClient {
     pub async fn enroll(&self, req: &EnrollRequest) -> Result<EnrollResponse> {
         self.call("POST", "/v1/enroll", None, Self::json(req)).await
     }
+
+    pub async fn renew(&self, req: &RenewRequest) -> Result<EnrollResponse> {
+        self.call("POST", "/v1/renew", None, Self::json(req)).await
+    }
 }
 
 /// Generate a key and CSR, enrol with the central server and write
@@ -155,4 +172,29 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     {
         std::fs::write(path, contents)
     }
+}
+
+/// Replace the identity in `dir` with a freshly issued one. Must be done while
+/// the current certificate is still valid. The previous key and certificate are
+/// kept as `key.pem.prev` and `cert.pem.prev`. Restart the security server
+/// afterwards so it presents the new certificate.
+pub async fn renew_in_dir(central_url: &str, dir: &Path, sans: &[String]) -> Result<MemberId> {
+    let read =
+        |f: &str| std::fs::read_to_string(dir.join(f)).with_context(|| format!("reading {f}"));
+    let (key, cert, ca) = (read("key.pem")?, read("cert.pem")?, read("ca.pem")?);
+    let member = pki::inspect_cert_pem(&cert)
+        .map_err(|e| anyhow!("{e}"))?
+        .member;
+    let ident = pki::generate_identity(&member, sans).map_err(|e| anyhow!("{e}"))?;
+    let client = CentralClient::with_identity(central_url, &ca, &cert, &key)?;
+    let resp = client
+        .renew(&RenewRequest {
+            csr_pem: ident.csr_pem,
+        })
+        .await?;
+    std::fs::rename(dir.join("key.pem"), dir.join("key.pem.prev"))?;
+    std::fs::rename(dir.join("cert.pem"), dir.join("cert.pem.prev"))?;
+    write_private(&dir.join("key.pem"), &ident.key_pem)?;
+    std::fs::write(dir.join("cert.pem"), resp.cert_pem)?;
+    Ok(member)
 }

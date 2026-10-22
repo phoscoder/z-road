@@ -737,3 +737,115 @@ async fn keeps_working_when_the_central_server_is_down_and_anchors_the_log() {
     .await;
     assert_eq!(st["verified"], true);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replay_window_survives_a_provider_restart() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let z = net.run(&zimra, true).await;
+    let raw = RawClient::new(&buyer, &zimra);
+    let body = br#"{"tin":"2000123456"}"#;
+
+    let id = random_id();
+    let env = raw.envelope(&id, body);
+    assert_eq!(raw.send(&env, body, None).await.0, 200);
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), 1);
+
+    // After a restart the provider rebuilds its replay cache from the audit log.
+    z.shutdown();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let _z = net.run(&zimra, true).await;
+    let env = raw.envelope(&id, body); // fresh timestamp, same message id
+    let (s, v) = raw.send(&env, body, None).await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (409, "already_processed")
+    );
+    assert_eq!(
+        net.upstream_calls.load(Ordering::SeqCst),
+        1,
+        "the internal system was not called again"
+    );
+    // a new message id still works
+    assert_eq!(
+        raw.send(&raw.envelope(&random_id(), body), body, None)
+            .await
+            .0,
+        200
+    );
+
+    // The identity endpoint reports the certificate's remaining life.
+    let (s, who) = get_json(
+        &zimra.internal("/admin/v1/identity"),
+        &[("authorization", &format!("Bearer {ADMIN}"))],
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(who["member"], "ZW/GOV/ZIMRA");
+    assert!(who["certificate_days_left"].as_i64().unwrap() > 300);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn certificate_renewal_retires_the_old_identity() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let _z = net.run(&zimra, true).await;
+    let b = net.run(&buyer, false).await;
+    let old_identity = RawClient::new(&buyer, &zimra);
+    let body = br#"{"tin":"2000123456"}"#;
+    assert_eq!(
+        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        old_identity
+            .send(&old_identity.envelope(&random_id(), body), body, None)
+            .await
+            .0,
+        200
+    );
+
+    // Renewal needs the current certificate: an anonymous caller is refused.
+    let anon = CentralClient::new(&net.central_url, &net.ca_pem).unwrap();
+    let csr =
+        pki::generate_identity(&"ZW/COM/12345678".parse().unwrap(), &["127.0.0.1".into()]).unwrap();
+    assert!(anon
+        .renew(&zroad_net::api::RenewRequest {
+            csr_pem: csr.csr_pem
+        })
+        .await
+        .is_err());
+
+    // Renew with the current certificate, then restart the security server.
+    let id = zroad_net::central_client::renew_in_dir(
+        &net.central_url,
+        &buyer.dir,
+        &["127.0.0.1".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(id.to_string(), "ZW/COM/12345678");
+    b.shutdown();
+    tokio::time::sleep(Duration::from_millis(2500)).await; // let ZIMRA's directory pick up the new certificate
+    let _b = net.run(&buyer, false).await;
+    assert_eq!(
+        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
+            .await
+            .0,
+        200,
+        "new identity works"
+    );
+
+    // The previous key pair, though still signed by the CA, is no longer accepted.
+    let (s, v) = old_identity
+        .send(&old_identity.envelope(&random_id(), body), body, None)
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (403, "member_not_active")
+    );
+}

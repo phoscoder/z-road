@@ -119,6 +119,9 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 | Revoke a member | `zroad-cli member-revoke …` (final) |
 | See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token … --subject 2000123456` |
 | Fetch a stored proof | `GET /admin/v1/proofs/<message_id>` |
+| Renew a certificate (before it expires) | `zroad-cli renew --central https://central.example.zw:8443 --dir ./zimra --san ss.zimra.example.zw`, then restart the security server |
+| Check certificate expiry | `GET /admin/v1/identity` (a warning is also logged under 30 days) |
+| Demo citizen page | `citizen-portal --security-server http://127.0.0.1:7002 --admin-token … --directory <data_dir>/directory.json` (demo only: it does not authenticate citizens) |
 
 ### What to back up
 
@@ -133,5 +136,5 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 * Put the internal listener on a private interface, set `internal_token`.
 * Run the network listener behind a firewall that allows only members' addresses where possible.
 * Give each service a least-privilege upstream credential rather than an open URL.
-* Monitor certificate expiry (certificates are valid for 365 days; there is no automatic renewal yet).
+* Monitor certificate expiry (certificates are valid for 365 days; renew with `zroad-cli renew` well before then, ideally from a scheduled job; a restart is needed to load the new certificate).
 * Ship audit logs and the directory to append-only storage.

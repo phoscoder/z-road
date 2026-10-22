@@ -105,13 +105,14 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
     let tls_client = tls::client_config(&ca, Some((&cert, &key)))?;
     let proofs_dir = dir.join("proofs");
     std::fs::create_dir_all(&proofs_dir)?;
+    let dedupe = seed_dedupe(&audit_path, &cfg);
     let st = Arc::new(AppState {
         signer: Arc::new(SoftwareSigner::from_pkcs8_pem(&key).map_err(|e| anyhow!("{e}"))?),
         cert_pem: cert.clone(),
         audit,
         dir: directory,
         tls_client,
-        dedupe: Mutex::new(HashMap::new()),
+        dedupe: Mutex::new(dedupe),
         rate: Mutex::new(HashMap::new()),
         subject_key,
         outbox: outbox::Outbox::new(dir.join("outbox"))?,
@@ -126,7 +127,7 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
             cfg.max_body_bytes * 2 + 4096,
         ))
         .with_state(st.clone());
-    let net_tls = tls::server_config(&ca, &cert, &key, true)?;
+    let net_tls = tls::server_config(&ca, &cert, &key, tls::ClientAuth::Required)?;
     let network = server::spawn(&cfg.network_listen, Some(net_tls), net_router).await?;
     let internal = server::spawn(&cfg.internal_listen, None, internal::router(st.clone())).await?;
 
@@ -134,6 +135,7 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
         tokio::spawn(worker::directory_loop(st.clone())),
         tokio::spawn(worker::outbox_loop(st.clone())),
         tokio::spawn(worker::anchor_loop(st.clone())),
+        tokio::spawn(worker::expiry_loop(st.clone())),
     ];
     tracing::info!(
         "security server for {} up: network https://{} internal http://{}",
@@ -147,4 +149,38 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
         state: st,
         tasks,
     })
+}
+
+/// Rebuild the replay cache from the audit log, so a restart does not reopen
+/// the replay window for messages answered in the last few minutes.
+fn seed_dedupe(path: &std::path::Path, cfg: &Config) -> HashMap<String, state::DedupeEntry> {
+    let now = zroad_core::now_ms();
+    let mut map = HashMap::new();
+    for e in audit::read_entries(path).unwrap_or_default() {
+        if e.ts_ms + provider::DEDUPE_TTL_MS <= now {
+            continue;
+        }
+        if let audit::AuditEvent::Exchange {
+            role,
+            message_id,
+            peer,
+            outcome,
+            service,
+            ..
+        } = e.event
+        {
+            let ours = service.starts_with(&format!("{}/", cfg.member_id));
+            if role == "provider" && ours && (outcome == "ok" || outcome == "duplicate") {
+                map.insert(
+                    format!("{peer}|{message_id}"),
+                    state::DedupeEntry {
+                        expires_ms: e.ts_ms + provider::DEDUPE_TTL_MS,
+                        fingerprint: Default::default(),
+                        state: state::DedupeState::Processed,
+                    },
+                );
+            }
+        }
+    }
+    map
 }

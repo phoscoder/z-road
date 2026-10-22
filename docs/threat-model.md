@@ -34,9 +34,9 @@ assurance for a production deployment.
 | Threat | Mitigation in this repository | Residual risk |
 | --- | --- | --- |
 | Eavesdropping or tampering in transit | TLS 1.2/1.3 with mutual authentication, certificates from a private CA (`rustls`, `ring`). | Depends on key hygiene. |
-| Impersonating another member | Certificate common name is set by the CA to the member id; the signed `client` must belong to the authenticated peer (`client_mismatch`); the signature key must be the certificate's key. | A stolen private key is a full impersonation until revoked. |
+| Impersonating another member | Certificate common name is set by the CA to the member id; the signed `client` must belong to the authenticated peer (`client_mismatch`); the signature key must be the certificate's key. | A stolen private key is a full impersonation until the member is revoked or renews (renewal retires the old key at once for every peer that has refreshed its directory). |
 | Forged or altered answers | Responses are signed and bound to the request by hash; bodies are hash-checked; end-to-end tests cover swapped bodies, wrong keys and altered payloads. | |
-| Replay | Per-peer message id cache, ±5 minute window, identical retries are idempotent and re-signed. | The cache is in memory: a provider restart inside the 15 minute window forgets it, leaving only the 5 minute timestamp window. Run state on durable storage before production. |
+| Replay | Per-peer message id cache, ±5 minute window, identical retries are idempotent and re-signed. | The cache is rebuilt from the audit log after a restart, so messages answered in the last 15 minutes are refused (`already_processed`) rather than answered again. The stored answer is not kept across restarts, so such a retry must use a new message id. Dedupe state is per security server instance: running several instances behind one endpoint needs a shared store. |
 | Unauthorised access to a service | Default-deny access rules per service, evaluated by the provider on the signed, authenticated identity. Denied requests never reach the internal system. | Access rules live in a config file; there is no review workflow yet. |
 | Revoked member keeps access | Directory status is checked on every request and refreshed every 30 s; the registered certificate fingerprint must match. | Up to one refresh interval of delay. If the central server is down, a stale directory means a revocation is not seen. There is no OCSP or CRL at the TLS layer. |
 | Rewriting history | Hash-chained log; startup refuses to continue on a broken chain; periodic anchors with a trusted timestamp. | Without anchors, whoever controls the log can rewrite the whole thing consistently. The latest entries since the last anchor are not yet dated. The timestamp authority is a trusted party. |
@@ -45,14 +45,14 @@ assurance for a production deployment.
 | Compromise of the CA key | Stored in a file with `0600` permissions. | **High.** Use an HSM or offline root with an online intermediate before any real use. The `Signer` trait exists so member signing can move to an HSM, but TLS keys currently load from files. |
 | Stolen admin token | Constant-time comparison, minimum length. | Bearer tokens in config files are weak. Prefer a secrets manager and per-operator credentials. |
 | Malicious internal caller | Optional `internal_token`. The client must belong to this member. | Anyone who can reach the internal port can act as any of the member's subsystems. Bind it to localhost or a private network. |
-| Supply chain | Small dependency set from well-known crates; `unsafe` is forbidden in this workspace; CI runs clippy with `-D warnings`. | No `cargo audit` or `cargo vet` in CI yet; no reproducible builds; no signed releases. |
-| Malformed input | Strict parsing; identifier grammar rejects `..`, `/` and whitespace in segments; hashes and signatures checked before use. | No fuzzing yet. |
+| Supply chain | Small dependency set from well-known crates; `unsafe` is forbidden in this workspace; CI runs clippy with `-D warnings` and `cargo audit` (weekly too). `Cargo.lock` is committed. | No `cargo vet`; no reproducible builds; no signed releases. |
+| Malformed input | Strict parsing; identifier grammar rejects `..`, `/` and whitespace in segments; hashes and signatures checked before use; a randomised test feeds garbage to every parser and verifier and requires an error, never a panic. | No coverage-guided fuzzing yet. |
 
 ## Known gaps (not yet addressed)
 
 1. HSM or PKCS#11 support for keys, and an offline root CA.
-2. Certificate renewal, expiry monitoring and verifying old proofs after key rotation (a proof is checked against the key in today's directory).
-3. Durable replay cache.
+2. Automatic, scheduled renewal with hot reload of the new certificate (today: run `zroad-cli renew` and restart), and verifying old proofs after key rotation (a proof is checked against the key in today's directory). Expiry is monitored: a warning is logged under 30 days and `GET /admin/v1/identity` reports days left.
+3. Replay cache shared between several instances of one security server.
 4. Authenticated, role-based admin and citizen-facing access, instead of a shared bearer token. The citizen-facing "who accessed my data" view needs identity proofing of the citizen before the admin endpoint is ever called.
 5. Directory integrity beyond TLS to the central server (for example signing directory snapshots).
 6. Formal protocol analysis, fuzzing, and an independent penetration test and code audit.

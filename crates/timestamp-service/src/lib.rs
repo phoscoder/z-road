@@ -54,7 +54,7 @@ pub async fn spawn(dir: &Path, addr: &str) -> Result<ServerHandle> {
         .route("/v1/timestamp", post(timestamp))
         .layer(axum::extract::DefaultBodyLimit::max(4 * 1024))
         .with_state(app);
-    let tls_cfg = tls::server_config(&ca, &cert, &key, true)?;
+    let tls_cfg = tls::server_config(&ca, &cert, &key, tls::ClientAuth::Required)?;
     Ok(server::spawn(addr, Some(tls_cfg), router).await?)
 }
 

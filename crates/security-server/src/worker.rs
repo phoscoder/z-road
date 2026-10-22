@@ -113,3 +113,19 @@ fn finish(st: &AppState, item: &OutboxItem, result: OutboxResult) {
         tracing::error!("cannot record outbox result: {e}");
     }
 }
+
+/// Warn well before the certificate expires. There is no automatic renewal yet,
+/// so this is the operator's cue to re-enrol.
+pub async fn expiry_loop(st: Arc<AppState>) {
+    loop {
+        if let Ok(info) = st.own_info() {
+            let days = (info.not_after - (now_ms() / 1000) as i64) / 86_400;
+            if days < 30 {
+                tracing::warn!(
+                    "this member's certificate expires in {days} day(s); re-enrol before then"
+                );
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+    }
+}

@@ -161,6 +161,7 @@ z-road/
   examples/
     zimra-clearance/    mock provider system (tax clearance check)
     buyer-client/       sample consumer
+    citizen-portal/     demo "who looked at my data?" page
   scripts/demo.sh       run a complete local network and make a signed, logged request
   docs/                 protocol, threat model, deployment, legal considerations, pilot plan
 ```
@@ -178,7 +179,7 @@ The demo starts a central server, a timestamp authority, a mock ZIMRA clearance 
 
 1. a buyer checks a supplier's tax clearance (`VALID`), and another that is `EXPIRED`;
 2. the signed proof of the exchange is verified offline;
-3. ZIMRA's log is queried for who looked up that TIN (the citizen's view);
+3. ZIMRA's log is queried for who looked up that TIN (the citizen's view), also as a web page on http://127.0.0.1:9100;
 4. the audit log is verified, including its trusted timestamp.
 
 See [docs/deployment.md](docs/deployment.md) for setting up a network by hand and the configuration reference.
@@ -187,11 +188,11 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 
 | Area | Implemented |
 | --- | --- |
-| Identity | Private CA; Ed25519 member keys; enrolment with one-time tokens; certificate subject always the member id |
+| Identity | Private CA; Ed25519 member keys; enrolment with one-time tokens; renewal that retires the old key; certificate subject always the member id |
 | Transport | Mutual TLS between security servers (`rustls`, `ring`) |
 | Messages | Signed requests and responses, bound together by hash; body hashes; ±5 minute clock window |
 | Access control | Per-service, default-deny rules evaluated by the provider; revocation through the directory |
-| Replay and retries | Per-peer message id cache; identical retries are idempotent |
+| Replay and retries | Per-peer message id cache (rebuilt from the audit log after a restart); identical retries are idempotent |
 | Resilience | Durable async outbox with backoff; cached directory keeps working if the central server is down |
 | Accountability | Hash-chained audit log on both sides, refuses to start on a broken chain, periodic trusted-timestamp anchors |
 | Proofs | A signed proof header on every answer, verifiable offline with `zroad-cli proof-verify` |
@@ -203,8 +204,8 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [x] **Phase 1: Proof of concept.** Security servers exchanging signed, logged requests over mTLS, plus a central server.
 - [x] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
 - [x] **Phase 3: Resilience.** Durable outbox, retries with backoff, idempotent redelivery, cached directory.
-- [x] **Phase 4: Transparency (backend).** Access log by data subject. A citizen-facing page with proper identity proofing is still to do.
-- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, durable replay cache, certificate renewal, fuzzing, and an independent security review.
+- [x] **Phase 4: Transparency.** Access log by data subject and a demo citizen page (`examples/citizen-portal`). A real citizen-facing service still needs identity proofing of the citizen.
+- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, scheduled renewal with hot reload, coverage-guided fuzzing, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
 Not started: shared security servers hosting many members, a service catalogue, ERP plug-ins.

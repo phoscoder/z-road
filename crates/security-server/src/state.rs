@@ -79,6 +79,8 @@ impl DirectoryCache {
 
 pub enum DedupeState {
     InFlight,
+    /// Answered before a restart; the answer itself was not kept.
+    Processed,
     Done {
         status: u16,
         body: Bytes,

@@ -31,6 +31,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/internal/v1/outbox/:id", get(outbox_status))
         .route("/admin/v1/access-log", get(access_log))
         .route("/admin/v1/audit/status", get(audit_status))
+        .route("/admin/v1/identity", get(identity))
         .route("/admin/v1/proofs/:id", get(proof))
         .route("/admin/v1/directory/refresh", post(refresh_directory))
         .route("/admin/v1/anchor", post(anchor_now))
@@ -353,5 +354,25 @@ async fn anchor_now(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Resp
                 .into_response()
         }
         Err(e) => error(StatusCode::BAD_GATEWAY, "anchor_failed", e.to_string()),
+    }
+}
+
+/// Who this security server is and when its certificate expires.
+async fn identity(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = check_admin(&st, &headers) {
+        return r;
+    }
+    match st.own_info() {
+        Ok(i) => {
+            let days_left = (i.not_after - (now_ms() / 1000) as i64) / 86_400;
+            Json(serde_json::json!({
+                "member": i.member,
+                "certificate_fingerprint": i.fingerprint,
+                "certificate_expires_unix": i.not_after,
+                "certificate_days_left": days_left,
+            }))
+            .into_response()
+        }
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()),
     }
 }

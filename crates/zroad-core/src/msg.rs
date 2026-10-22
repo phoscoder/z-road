@@ -207,3 +207,66 @@ pub fn verify_proof(
     }
     Ok((req, res))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::SoftwareSigner;
+    use rand::{Rng, RngCore, SeedableRng};
+
+    fn signer() -> SoftwareSigner {
+        let kp = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
+        SoftwareSigner::from_pkcs8_pem(&kp.serialize_pem()).unwrap()
+    }
+
+    fn envelope() -> RequestEnvelope {
+        RequestEnvelope {
+            version: PROTOCOL_VERSION,
+            message_id: "abc".into(),
+            client: "ZW/COM/1/ap".parse().unwrap(),
+            service: "ZW/GOV/ZIMRA/a/b/v1".parse().unwrap(),
+            issued_at_ms: 1,
+            body_sha256: crypto::sha256_hex(b"x"),
+            content_type: "application/json".into(),
+            subject: None,
+        }
+    }
+
+    #[test]
+    fn domain_separation() {
+        let s = signer();
+        let signed = SignedMessage::sign(REQUEST_DOMAIN, &envelope(), &s).unwrap();
+        assert!(signed
+            .open::<RequestEnvelope>(REQUEST_DOMAIN, &s.public_key())
+            .is_ok());
+        // a request signature is not valid as a response signature
+        assert!(signed
+            .open::<RequestEnvelope>(RESPONSE_DOMAIN, &s.public_key())
+            .is_err());
+    }
+
+    /// Cheap robustness check in lieu of real fuzzing: hostile input must be
+    /// rejected with an error, never a panic.
+    #[test]
+    fn garbage_never_panics() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let pk = signer().public_key();
+        for _ in 0..2000 {
+            let n = rng.gen_range(0..200);
+            let mut bytes = vec![0u8; n];
+            rng.fill_bytes(&mut bytes);
+            let text: String = bytes.iter().map(|b| (*b % 95 + 32) as char).collect();
+            let _ = text.parse::<crate::id::MemberId>();
+            let _ = text.parse::<crate::id::ClientId>();
+            let _ = text.parse::<crate::id::ServiceId>();
+            let _ = b64_decode(&text);
+            let msg = SignedMessage {
+                payload_b64: b64_encode(&bytes),
+                signature_b64: text.clone(),
+            };
+            assert!(msg.open::<RequestEnvelope>(REQUEST_DOMAIN, &pk).is_err());
+            let _ = serde_json::from_slice::<ExchangeRequest>(&bytes);
+            let _ = crate::pki::inspect_cert_der(&bytes);
+        }
+    }
+}

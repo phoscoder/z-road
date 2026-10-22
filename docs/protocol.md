@@ -53,8 +53,16 @@ by its certificate.
    server.
 
 Revocation is final. A revoked member cannot re-enrol; it needs a new member
-code. Re-issuing a token for an existing active member is how certificates are
-rotated.
+code.
+
+**Renewal.** While its certificate is still valid, a member can call
+`POST /v1/renew {csr_pem}` on the central server over mutual TLS. The central
+server checks that the presented certificate is the one registered for an
+`active` member, then issues a new one for the same member id and endpoint host
+and updates the directory. Peers stop accepting the old certificate as soon as
+they refresh their directory (the fingerprint no longer matches), even though it
+is still signed by the CA and unexpired. A member whose certificate has already
+expired must be re-registered and re-enrolled with a new token.
 
 ## 4. Directory
 
@@ -147,6 +155,7 @@ A provider remembers `(peer, message_id)` for 15 minutes together with
   and returned. This makes retries after a lost response safe.
 * Same id, different content: `replay` (409).
 * Same id still being processed: `in_flight` (409).
+* Same id answered before a provider restart: the replay cache is rebuilt from the audit log, but the stored answer is gone, so the provider returns `already_processed` (409). The consumer must send a new message.
 * Internal system unreachable or 5xx: the entry is dropped so a retry is processed again.
 
 ## 7. Internal API (consumer side)
@@ -230,7 +239,7 @@ token is issued so they are never reused.
 ## 10. What is not specified yet
 
 * Multiple members behind one shared security server.
-* Certificate renewal before expiry, and verifying old proofs after rotation.
+* Verifying old proofs after a certificate rotation (the offline check uses the key in the current directory).
 * Federation between several Z-Road instances or with other X-Road deployments.
 * Streaming and large-object transfer (bodies are capped, default 2 MiB).
 * Consumer-side service discovery (a published catalogue of services).

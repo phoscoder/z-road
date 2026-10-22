@@ -92,6 +92,11 @@ echo
 echo "==> who has looked up TIN 2000123456? (the citizen's view, from ZIMRA's log)"
 "$CLI" access-log --security-server http://127.0.0.1:7002 --admin-token "$ADMIN_TOKEN" --subject 2000123456 | python3 -m json.tool 2>/dev/null || true
 echo
+echo "==> citizen portal demo: open http://127.0.0.1:9100 and enter 2000123456 (running until this script ends)"
+bg "$BIN/citizen-portal" --security-server http://127.0.0.1:7002 --admin-token "$ADMIN_TOKEN" --directory "$WORK/zimra/directory.json"
+sleep 1
+curl -s "http://127.0.0.1:9100/?subject=2000123456" | grep -o "<td>[^<]*</td>" | head -4 || true
+echo
 echo "==> waiting for the audit log to be timestamped, then verifying it"
 sleep 7
 "$CLI" audit-verify --log "$WORK/zimra/audit/log.jsonl" --directory "$WORK/zimra/directory.json"
