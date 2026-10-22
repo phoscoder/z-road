@@ -23,9 +23,10 @@ use axum::routing::post;
 use axum::Router;
 use tokio::task::JoinHandle;
 use zroad_core::audit::{self, AuditLog};
-use zroad_core::crypto::SoftwareSigner;
+use zroad_core::crypto::{AsyncSigner, SoftwareSigner};
 use zroad_core::{pki, random_secret};
 use zroad_net::central_client::{write_private, CentralClient};
+use zroad_net::remote_signer::RemoteSigner;
 use zroad_net::server::{self, ServerHandle};
 use zroad_net::tls;
 
@@ -62,6 +63,7 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
     spawn_node(config::NodeConfig {
         members: vec![cfg],
         node_dir,
+        node_identity: None,
     })
     .await
 }
@@ -101,12 +103,29 @@ pub async fn spawn_node(node: config::NodeConfig) -> Result<Running> {
     // established by the provider's signature on every answer.
     // All members share one server certificate slot; whichever member renews
     // most recently puts its fresh certificate there.
+    let node_identity = match &node.node_identity {
+        Some(n) => Some(NodeIdentity::load(n)?),
+        None => None,
+    };
     let mut states = Vec::new();
     let mut shared_cert: Option<Arc<tls::ReloadableCert>> = None;
     for cfg in &node.members {
-        states.push(build_member(cfg.clone(), directory.clone(), &mut shared_cert).await?);
+        states.push(
+            build_member(
+                cfg.clone(),
+                directory.clone(),
+                &mut shared_cert,
+                node_identity.as_ref(),
+            )
+            .await?,
+        );
     }
-    let server_cert = shared_cert.ok_or_else(|| anyhow!("no members configured"))?;
+    // With a node identity of its own, the node presents that to peers; the
+    // hosted members' keys are not involved in TLS at all.
+    let server_cert = match &node_identity {
+        Some(n) => n.server_cert.clone(),
+        None => shared_cert.ok_or_else(|| anyhow!("no members configured"))?,
+    };
     let max_body = node
         .members
         .iter()
@@ -128,7 +147,10 @@ pub async fn spawn_node(node: config::NodeConfig) -> Result<Running> {
     for st in &states {
         tasks.push(tokio::spawn(worker::outbox_loop(st.clone())));
         tasks.push(tokio::spawn(worker::anchor_loop(st.clone())));
-        tasks.push(tokio::spawn(renew::renew_loop(st.clone())));
+        if st.cfg.remote_signer.is_none() {
+            // a remote-signed member's key is not here, so it renews where its key is
+            tasks.push(tokio::spawn(renew::renew_loop(st.clone())));
+        }
         tasks.push(tokio::spawn(catalogue::publish_loop(st.clone())));
         tracing::info!("hosting member {}", st.cfg.member_id);
     }
@@ -169,6 +191,7 @@ async fn build_member(
     cfg: Config,
     directory: Arc<DirectoryCache>,
     shared_cert: &mut Option<Arc<tls::ReloadableCert>>,
+    node_identity: Option<&NodeIdentity>,
 ) -> Result<Arc<AppState>> {
     let dir = cfg.data_dir.clone();
     std::fs::create_dir_all(&dir)?;
@@ -180,13 +203,27 @@ async fn build_member(
             )
         })
     };
-    let (key, cert, ca) = (read("key.pem")?, read("cert.pem")?, read("ca.pem")?);
+    let remote = cfg.remote_signer.is_some();
+    // A remote-signed member has no private key here: only its certificate.
+    let key = if remote {
+        String::new()
+    } else {
+        read("key.pem")?
+    };
+    let (cert, ca) = (read("cert.pem")?, read("ca.pem")?);
     let me = pki::inspect_cert_pem(&cert).map_err(|e| anyhow!("{e}"))?;
     if me.member != cfg.member_id {
         bail!(
             "certificate is for {}, but the config says {}",
             me.member,
             cfg.member_id
+        );
+    }
+    if remote && dir.join("key.pem").exists() {
+        bail!(
+            "{} is remote-signed but {} exists: the key must stay with the member's signer",
+            cfg.member_id,
+            dir.join("key.pem").display()
         );
     }
 
@@ -222,14 +259,39 @@ async fn build_member(
     );
     let audit = Arc::new(AuditLog::open(&audit_path).map_err(|e| anyhow!("{e}"))?);
 
-    let tls_client = tls::client_config(&ca, Some((&cert, &key)))?;
-    let server_cert = match shared_cert {
-        Some(c) => c.clone(),
-        None => {
-            let c = tls::ReloadableCert::new(&cert, &key)?;
-            *shared_cert = Some(c.clone());
-            c
+    let (signer, tls_client): (Arc<dyn AsyncSigner>, _) = match (&cfg.remote_signer, node_identity)
+    {
+        (Some(rs), Some(node)) => {
+            let signer_ca = std::fs::read_to_string(&rs.ca_file)
+                .with_context(|| format!("reading {}", rs.ca_file.display()))?;
+            // The node authenticates to the signer with its own certificate and
+            // pins the signer's CA.
+            let to_signer = tls::client_config(&signer_ca, Some((&node.cert_pem, &node.key_pem)))?;
+            (
+                Arc::new(RemoteSigner::new(&rs.url, to_signer, me.public_key.clone())),
+                node.tls_client.clone(),
+            )
         }
+        (Some(_), None) => bail!(
+            "{} is remote-signed but the node has no identity",
+            cfg.member_id
+        ),
+        (None, _) => (
+            Arc::new(SoftwareSigner::from_pkcs8_pem(&key).map_err(|e| anyhow!("{e}"))?),
+            tls::client_config(&ca, Some((&cert, &key)))?,
+        ),
+    };
+    let server_cert = match (remote, node_identity) {
+        (_, Some(n)) => n.server_cert.clone(),
+        (false, None) => match shared_cert {
+            Some(c) => c.clone(),
+            None => {
+                let c = tls::ReloadableCert::new(&cert, &key)?;
+                *shared_cert = Some(c.clone());
+                c
+            }
+        },
+        (true, None) => unreachable!("rejected above"),
     };
     let proofs_dir = dir.join("proofs");
     std::fs::create_dir_all(&proofs_dir)?;
@@ -239,7 +301,7 @@ async fn build_member(
         schemas,
         ca_pem: ca.clone(),
         identity: AppState::new_identity_lock(state::Identity {
-            signer: Arc::new(SoftwareSigner::from_pkcs8_pem(&key).map_err(|e| anyhow!("{e}"))?),
+            signer,
             cert_pem: cert.clone(),
             tls_client,
         }),
@@ -315,4 +377,40 @@ fn load_schemas(cfg: &Config) -> Result<HashMap<String, state::ServiceSchemas>> 
         );
     }
     Ok(out)
+}
+
+/// The node's own member identity, used for TLS by remote-signed members.
+struct NodeIdentity {
+    cert_pem: String,
+    key_pem: String,
+    tls_client: Arc<rustls::ClientConfig>,
+    server_cert: Arc<tls::ReloadableCert>,
+}
+
+impl NodeIdentity {
+    fn load(cfg: &config::NodeIdentityConfig) -> Result<Self> {
+        let read = |f: &str| {
+            std::fs::read_to_string(cfg.dir.join(f)).with_context(|| {
+                format!(
+                    "reading {} (enrol the node with `zroad-cli enroll`)",
+                    cfg.dir.join(f).display()
+                )
+            })
+        };
+        let (key_pem, cert_pem, ca) = (read("key.pem")?, read("cert.pem")?, read("ca.pem")?);
+        let info = pki::inspect_cert_pem(&cert_pem).map_err(|e| anyhow!("{e}"))?;
+        if info.member != cfg.member {
+            bail!(
+                "the node certificate is for {}, but node_member is {}",
+                info.member,
+                cfg.member
+            );
+        }
+        Ok(Self {
+            tls_client: tls::client_config(&ca, Some((&cert_pem, &key_pem)))?,
+            server_cert: tls::ReloadableCert::new(&cert_pem, &key_pem)?,
+            cert_pem,
+            key_pem,
+        })
+    }
 }

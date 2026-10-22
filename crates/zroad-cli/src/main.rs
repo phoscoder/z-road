@@ -39,9 +39,14 @@ enum Cmd {
         id: MemberId,
         #[arg(long)]
         name: String,
-        /// https URL of the member's security server.
-        #[arg(long)]
+        /// https URL of the member's security server (not used with --hosted-by).
+        #[arg(long, default_value = "")]
         endpoint: String,
+        /// Register the member as hosted by this already-enrolled node. The
+        /// member keeps its own key (see signer-service); peers accept its traffic
+        /// only from that node.
+        #[arg(long)]
+        hosted_by: Option<MemberId>,
     },
     /// Revoke a member. Revocation is final.
     MemberRevoke {
@@ -150,10 +155,14 @@ async fn main() -> Result<()> {
             id,
             name,
             endpoint,
+            hosted_by,
         } => {
             let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
             let token = std::fs::read_to_string(admin_token_file)?;
-            let r = c.add_member(token.trim(), &id, &name, &endpoint).await?;
+            let r = match &hosted_by {
+                Some(node) => c.add_hosted_member(token.trim(), &id, &name, node).await?,
+                None => c.add_member(token.trim(), &id, &name, &endpoint).await?,
+            };
             println!("{}", r.enrollment_token);
             eprintln!(
                 "member {} registered; give the token above to its operator (single use)",

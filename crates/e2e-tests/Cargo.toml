@@ -19,6 +19,7 @@ axum.workspace = true
 bytes.workspace = true
 central-server.workspace = true
 security-server.workspace = true
+signer-service.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

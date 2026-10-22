@@ -29,6 +29,16 @@ pub struct ServiceConfig {
     pub enforce_response_schema: bool,
 }
 
+/// A member that keeps its own signing key on its own machine (see the
+/// `signer-service` crate) instead of handing it to the node that hosts it.
+#[derive(Clone, Debug, Deserialize)]
+pub struct RemoteSignerConfig {
+    /// `https://host:port` of the member's signer service.
+    pub url: String,
+    /// The signer's own CA certificate (`signer-ca.pem`), which this node pins.
+    pub ca_file: PathBuf,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct AccessRule {
     /// `subsystem/service/version` of a service this member provides.
@@ -99,6 +109,14 @@ pub struct Config {
     pub services: Vec<ServiceConfig>,
     #[serde(default)]
     pub access: Vec<AccessRule>,
+    /// Set for a hosted member whose key is not held here. `data_dir` then needs
+    /// only `cert.pem` and `ca.pem`: there is no `key.pem`.
+    #[serde(default)]
+    pub remote_signer: Option<RemoteSignerConfig>,
+    /// The node's own identity (`key.pem`, `cert.pem`, `ca.pem`), used for TLS on
+    /// behalf of remote-signed members.
+    #[serde(default)]
+    pub node_identity_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -120,6 +138,14 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         if self.admin_token.len() < 16 {
             bail!("admin_token must be at least 16 characters");
+        }
+        if self.remote_signer.is_some() && self.node_identity_dir.is_none() {
+            bail!("a remote-signed member needs the node's identity (node_identity_dir)");
+        }
+        if let Some(r) = &self.remote_signer {
+            if !r.url.starts_with("https://") {
+                bail!("remote_signer.url must be an https URL");
+            }
         }
         for s in &self.services {
             if s.id.split('/').count() != 3 {
@@ -184,6 +210,12 @@ struct NodeFile {
     /// (the directory cache). Defaults to `node` next to the config file.
     #[serde(default)]
     node_dir: Option<PathBuf>,
+    /// The node's own member identity. Required when any hosted member keeps its
+    /// key in a signer service: the node then authenticates TLS as itself.
+    #[serde(default)]
+    node_member: Option<MemberId>,
+    #[serde(default)]
+    node_data_dir: Option<PathBuf>,
     #[serde(default = "d_tsa")]
     tsa_member: MemberId,
     #[serde(default = "d_refresh")]
@@ -214,6 +246,15 @@ struct NodeMember {
     services: Vec<ServiceConfig>,
     #[serde(default)]
     access: Vec<AccessRule>,
+    #[serde(default)]
+    remote_signer: Option<RemoteSignerConfig>,
+}
+
+/// The node's own identity.
+#[derive(Clone, Debug)]
+pub struct NodeIdentityConfig {
+    pub member: MemberId,
+    pub dir: PathBuf,
 }
 
 /// The settings of a whole node: its members plus the directory cache location.
@@ -221,6 +262,7 @@ struct NodeMember {
 pub struct NodeConfig {
     pub members: Vec<Config>,
     pub node_dir: PathBuf,
+    pub node_identity: Option<NodeIdentityConfig>,
 }
 
 impl NodeConfig {
@@ -237,6 +279,7 @@ impl NodeConfig {
             return Ok(Self {
                 members: vec![cfg],
                 node_dir,
+                node_identity: None,
             });
         }
         let base = path.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -261,6 +304,12 @@ impl NodeConfig {
         for m in &f.members {
             let mut services = m.services.clone();
             resolve_schema_paths(&mut services, base);
+            let mut remote_signer = m.remote_signer.clone();
+            if let Some(r) = &mut remote_signer {
+                if r.ca_file.is_relative() {
+                    r.ca_file = base.join(&r.ca_file);
+                }
+            }
             let cfg = Config {
                 member_id: m.member_id.clone(),
                 data_dir: abs(&m.data_dir),
@@ -279,6 +328,8 @@ impl NodeConfig {
                 renew_before_days: f.renew_before_days,
                 services,
                 access: m.access.clone(),
+                remote_signer,
+                node_identity_dir: f.node_data_dir.as_ref().map(|p| abs(p)),
             };
             cfg.validate()
                 .with_context(|| format!("member {}", cfg.member_id))?;
@@ -309,7 +360,22 @@ impl NodeConfig {
             .node_dir
             .map(|p| abs(&p))
             .unwrap_or_else(|| base.join("node"));
-        Ok(Self { members, node_dir })
+        let node_identity = match (f.node_member, f.node_data_dir) {
+            (Some(member), Some(dir)) => Some(NodeIdentityConfig {
+                member,
+                dir: abs(&dir),
+            }),
+            (None, None) => None,
+            _ => bail!("node_member and node_data_dir must be set together"),
+        };
+        if members.iter().any(|m| m.remote_signer.is_some()) && node_identity.is_none() {
+            bail!("members with a remote_signer need node_member and node_data_dir");
+        }
+        Ok(Self {
+            members,
+            node_dir,
+            node_identity,
+        })
     }
 }
 

@@ -498,6 +498,7 @@ dependencies = [
  "security-server",
  "serde",
  "serde_json",
+ "signer-service",
  "tempfile",
  "timestamp-service",
  "tokio",
@@ -1614,6 +1615,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "signer-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zroad-core",
+ "zroad-net",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2324,6 +2340,7 @@ dependencies = [
 name = "zroad-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
  "ed25519-dalek",
  "hex",
@@ -2346,6 +2363,7 @@ name = "zroad-net"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "bytes",
  "http",

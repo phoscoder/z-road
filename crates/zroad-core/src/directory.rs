@@ -19,7 +19,14 @@ pub struct MemberRecord {
     /// Base URL of the member's security server, e.g. `https://zimra.example:8443`.
     pub endpoint: String,
     pub status: MemberStatus,
+    /// The registered certificate. For a hosted member this holds the member's
+    /// signing key; the member's TLS identity is its node's.
     pub cert_pem: Option<String>,
+    /// The node (itself a member) that carries this member's traffic. A hosted
+    /// member signs its own messages, so the node never holds its key, but peers
+    /// accept its messages only from that node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosted_by: Option<MemberId>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -34,9 +41,20 @@ impl Directory {
         self.members.iter().find(|m| &m.id == id)
     }
 
+    /// An active member with a certificate. A hosted member is only reachable
+    /// while its node is active too: revoke the node and everything it hosts goes
+    /// with it.
     pub fn get_active(&self, id: &MemberId) -> Option<&MemberRecord> {
-        self.get(id)
-            .filter(|m| m.status == MemberStatus::Active && m.cert_pem.is_some())
+        let rec = self
+            .get(id)
+            .filter(|m| m.status == MemberStatus::Active && m.cert_pem.is_some())?;
+        match &rec.hosted_by {
+            None => Some(rec),
+            Some(node) => self
+                .get(node)
+                .filter(|n| n.status == MemberStatus::Active && n.hosted_by.is_none())
+                .map(|_| rec),
+        }
     }
 }
 

@@ -201,7 +201,9 @@ async fn call(
             let status = match &e {
                 CallError::Invalid(_) | CallError::SchemaViolation(_) => StatusCode::BAD_REQUEST,
                 CallError::UnknownProvider(_) => StatusCode::NOT_FOUND,
-                CallError::Unreachable(_) => StatusCode::SERVICE_UNAVAILABLE,
+                CallError::Unreachable(_) | CallError::SignerUnavailable(_) => {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
                 CallError::Remote { status, .. } => {
                     StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
                 }

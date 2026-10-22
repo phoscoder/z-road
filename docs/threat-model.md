@@ -52,15 +52,31 @@ assurance for a production deployment.
 
 ## Shared nodes
 
-When one security server hosts several members, the operator holds all their
-private keys and can sign as any of them; members must trust it as they would a
-bank trusts its card processor. Isolation between members is by configuration:
-separate state directories, separate tokens, internal paths per member, and a
-check that a member's internal API only accepts its own client ids. A bug in that
-routing is the main risk, which is why it has a dedicated end-to-end test. The
-node's TLS server certificate belongs to one hosted member at a time, so
-transport-level identity on a shared node means "a registered node"; the
-provider's signature on each answer is what proves which member answered.
+A security server can host several members. Two models, with different trust:
+
+* **Operator-held keys.** The operator holds every hosted member's private key and
+  can sign as any of them; members must trust it as a bank trusts its card
+  processor. Isolation between members is by configuration: separate state
+  directories, tokens, internal paths, and a check that a member's internal API
+  only accepts its own client ids. The node's TLS server certificate belongs to
+  one hosted member at a time.
+* **Member-held keys.** The node has its own identity and each hosted member signs
+  with a key kept in a signer service on its own machine. A compromised node
+  cannot forge a message from a hosted member (providers verify against the
+  member's key; tested), cannot speak for members it does not host, and cannot get
+  the signer to sign anything that is not that member's own request or answer. The
+  signer records every signature in its own hash-chained log, so the member can
+  detect a node that abuses its name (for example by sending requests the member
+  never intended, which the member can see but not prevent except by rate limit or
+  by taking the signer down). A hosted member cannot bypass its node, and revoking
+  the node cuts off everything it hosts.
+
+Residual risk for member-held keys: the node still sees all traffic in clear and
+can drop or delay it; the signer service is a new attack surface and a new
+availability dependency (no signer, no traffic); the signer machine's key is a file
+unless an HSM is used; the node's own certificate is renewed by hand (`zroad-cli
+renew` and a restart); and the signer's policy is limited to ownership, freshness
+and a rate limit (no per-service allow-list yet).
 
 ## Known gaps (not yet addressed)
 

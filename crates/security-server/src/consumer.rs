@@ -44,6 +44,8 @@ pub enum CallError {
         code: String,
         message: String,
     },
+    /// This member's signer could not be reached or refused. Retry later.
+    SignerUnavailable(String),
     /// The request does not match the schema the provider published.
     SchemaViolation(String),
     /// The answer failed verification.
@@ -54,7 +56,7 @@ pub enum CallError {
 impl CallError {
     pub fn retryable(&self) -> bool {
         match self {
-            CallError::Unreachable(_) => true,
+            CallError::Unreachable(_) | CallError::SignerUnavailable(_) => true,
             CallError::Remote { status, code, .. } => {
                 matches!(*status, 429 | 502 | 503 | 504) || code == "in_flight"
             }
@@ -68,6 +70,7 @@ impl CallError {
             CallError::UnknownProvider(_) => "unknown_provider",
             CallError::Unreachable(_) => "provider_unreachable",
             CallError::Remote { code, .. } => code,
+            CallError::SignerUnavailable(_) => "signer_unavailable",
             CallError::SchemaViolation(_) => "schema_violation",
             CallError::BadResponse(_) => "bad_response",
             CallError::Internal(_) => "internal",
@@ -79,6 +82,7 @@ impl CallError {
             CallError::Invalid(m)
             | CallError::UnknownProvider(m)
             | CallError::Unreachable(m)
+            | CallError::SignerUnavailable(m)
             | CallError::SchemaViolation(m)
             | CallError::BadResponse(m)
             | CallError::Internal(m) => m.clone(),
@@ -119,8 +123,10 @@ pub async fn call(st: &AppState, p: &CallParams) -> Result<CallSuccess, CallErro
         content_type: p.content_type.clone(),
         subject: p.subject.clone(),
     };
-    let signed = SignedMessage::sign(REQUEST_DOMAIN, &envelope, st.identity().signer.as_ref())
-        .map_err(|e| CallError::Internal(e.to_string()))?;
+    let signed =
+        SignedMessage::sign_async(REQUEST_DOMAIN, &envelope, st.identity().signer.as_ref())
+            .await
+            .map_err(|e| CallError::SignerUnavailable(e.to_string()))?;
     let request_sha = signed
         .payload_sha256()
         .map_err(|e| CallError::Internal(e.to_string()))?;
@@ -146,6 +152,7 @@ pub async fn call(st: &AppState, p: &CallParams) -> Result<CallSuccess, CallErro
         status,
         outcome,
         subject_ref: None,
+        via: None,
     });
     if let Err(e) = logged {
         tracing::error!("cannot write audit log: {e}");

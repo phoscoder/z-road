@@ -66,6 +66,66 @@ is still signed by the CA and unexpired. A security server does this by itself w
 a restart (`POST /admin/v1/renew` does it on demand). A member whose certificate has already
 expired must be re-registered and re-enrolled with a new token.
 
+## 3a. Hosted members with their own keys
+
+A member does not have to run a security server, and a member that is hosted on a
+shared node does not have to hand the node its signing key. There are two models:
+
+* **Operator-held keys** (above, "shared nodes"): the node holds each hosted
+  member's key and TLS identity, and can sign as them.
+* **Member-held keys**: the *node* is itself a member with its own identity
+  (`ZW/NODE/<name>`, enrolled normally) and authenticates TLS as itself. Each
+  hosted member keeps its own Ed25519 key in a **signer service** on its own
+  machine. The node asks the signer to sign each message; the key never leaves.
+
+Registration. The authority registers the node first, then each hosted member with
+`hosted_by = <node id>`. The central server requires the node to be an enrolled,
+active, stand-alone member, copies the node's endpoint into the hosted member's
+record, and refuses to change who hosts an existing member. The hosted member
+generates its own key and CSR (`zroad-cli enroll`) and receives a certificate
+whose key is its **signing key**. The directory record carries `hosted_by`.
+
+What providers check. The TLS peer (the *transport*) may differ from the member
+the request is *from*:
+
+1. The transport is authenticated and active as before.
+2. The request names `client.member`. If it equals the transport, the transport's
+   certificate key verifies the signature, **unless the directory says that member
+   is hosted**, in which case it is refused with `hosted_member_must_use_node`
+   (403): a hosted member cannot bypass its node.
+3. If it differs, the directory must show that member `active` with
+   `hosted_by == transport`, and the signature is verified with the **hosted
+   member's registered key**, which the node does not have. Anything else is
+   `client_mismatch` (403); a node signing with its own key gets `bad_signature` (400).
+4. Everything after that (access rules, schemas, replay, audit) is keyed by the
+   hosted member. The audit entry records the member as `peer` and the node as
+   `via`.
+
+A hosted member counts as active only while its node is: revoke the node and its
+hosted members stop being reachable and stop being accepted.
+
+Providers that are hosted answer the same way: the response is signed by the
+member's key (through its signer), and consumers verify it against the member's
+registered key as for any provider.
+
+**Signer service.** `POST /v1/sign {"message_b64": "<domain \n payload>"}` over
+mutual TLS. The signer presents a certificate from its own private CA (pinned by
+the node) and requires a client certificate from the Z-Road CA whose subject is
+the one configured node. It signs only Z-Road requests whose `client.member` is
+this member and responses whose `provider` is this member, with a fresh timestamp,
+within a rate limit; everything else is refused (`not_the_node`, `not_our_request`,
+`not_our_response`, `unsupported_domain`, `stale_or_unsupported`, `rate_limited`).
+Before signing it appends a `signed` entry (kind, message id, service, hash of the
+payload, node) to **its own hash-chained audit log**, and refuses
+(`audit_unavailable`) if it cannot. The member therefore has an independent record
+of everything done in its name. The node verifies each returned signature against
+the member's registered key before using it. If the signer is down the node cannot
+act for the member at all (`signer_unavailable`, 503, retryable).
+
+Catalogue publishing for a hosted member goes through its node
+(`on_behalf_of`), which the central server accepts only for members hosted by the
+caller.
+
 ## 4. Directory
 
 `GET /v1/directory` on the central server returns every member's id, name,
@@ -181,7 +241,7 @@ to the question), `provider`, `status` (the internal system's HTTP status),
 2. Per-member rate limit (`rate_limited`).
 3. The member is `active` and the certificate matches the directory (`member_not_active`).
 4. The request parses and the signature verifies with the certificate's key (`malformed`, `bad_signature`).
-5. Protocol version, message id, `client.member` equals the peer (`client_mismatch`), `service.member` is this provider (`wrong_provider`).
+5. Protocol version, message id, the speaking member is authorised for this peer (`client_mismatch`, `hosted_member_must_use_node`; see 3a), `service.member` is this provider (`wrong_provider`).
 6. `issued_at_ms` within ±5 minutes (`stale_request`).
 7. Body size limit and hash (`too_large`, `body_mismatch`).
 8. The service exists (`unknown_service`) and an access rule allows the client (`access_denied`). **Default is deny.**
@@ -291,7 +351,8 @@ token is issued so they are never reused.
 
 ## 10. What is not specified yet
 
-* Member-held keys for members on a shared security server (today the operator holds them).
+* Renewal of the node's own certificate without a restart, and renewal of a hosted member's key (renew on the signer's machine with `zroad-cli renew`, then restart the signer).
+* Policy in the signer beyond rate limits (for example allowed services).
 * Verifying old proofs after a certificate rotation (the offline check uses the key in the current directory).
 * Federation between several Z-Road instances or with other X-Road deployments.
 * Streaming and large-object transfer (bodies are capped, default 2 MiB).

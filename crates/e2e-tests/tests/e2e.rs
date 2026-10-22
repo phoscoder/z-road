@@ -955,6 +955,7 @@ async fn shared_node_hosts_several_members_in_isolation() {
             net.config_with(&b, false, tok_b, &[]),
         ],
         node_dir: net.tmp.path().join("node"),
+        node_identity: None,
     };
     let running = security_server::spawn_node(node).await.unwrap();
     assert_eq!(running.members.len(), 3);
@@ -1115,6 +1116,7 @@ async fn catalogue_lists_services_of_active_members() {
             request_schema: None,
             response_schema: None,
         }],
+        on_behalf_of: None,
     };
     assert!(public.publish_catalogue(&anon).await.is_err());
 
@@ -1342,6 +1344,7 @@ async fn schemas_are_published_and_enforced() {
             request_schema: Some(json!({ "type": "nonsense" })),
             response_schema: None,
         }],
+        on_behalf_of: None,
     };
     assert!(as_buyer.publish_catalogue(&bad_item).await.is_err());
 
@@ -1474,4 +1477,333 @@ async fn provider_fails_closed_when_the_audit_log_cannot_be_written() {
 
     // The chain is intact throughout, and the citizen view does not double count.
     audit::verify_file(&zimra.dir.join("audit/log.jsonl")).unwrap();
+}
+
+/// Hosted members keep their signing keys on their own machines (signer
+/// services). The node that carries their traffic never holds those keys.
+#[tokio::test(flavor = "multi_thread")]
+async fn members_keep_their_own_keys_on_a_shared_node() {
+    use security_server::config::{NodeIdentityConfig, RemoteSignerConfig};
+    use zroad_core::crypto::AsyncSigner;
+    use zroad_net::remote_signer::RemoteSigner;
+
+    let net = Net::start().await;
+    let node_id = "ZW/NODE/acme-hosting";
+
+    // Stand-alone members: a provider (ZIMRA) and a consumer.
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let standalone = net.member("ZW/COM/33333333").await;
+    let _z = security_server::spawn(net.config_with(
+        &zimra,
+        true,
+        ADMIN,
+        &["ZW/COM/11111111", "ZW/COM/33333333"],
+    ))
+    .await
+    .unwrap();
+    let _s = net.run(&standalone, false).await;
+
+    // The node has an identity of its own, used for TLS.
+    let (node_net, node_int) = (free_port(), free_port());
+    let node_dir = net.tmp.path().join("node-identity");
+    net.register(node_id, &format!("https://127.0.0.1:{node_net}"), &node_dir)
+        .await;
+
+    // Each hosted member generates its key on its own machine and runs a signer there.
+    let central = CentralClient::new(&net.central_url, &net.ca_pem).unwrap();
+    struct Hosted {
+        member: Member,
+        signer_dir: PathBuf,
+        signer_port: u16,
+    }
+    let mut signer_handles: Vec<ServerHandle> = Vec::new();
+    let mut hosted = Vec::new();
+    for id in ["ZW/COM/11111111", "ZW/COM/22222222"] {
+        let mid: MemberId = id.parse().unwrap();
+        let tok = central
+            .add_hosted_member(&net.admin_token, &mid, id, &node_id.parse().unwrap())
+            .await
+            .unwrap();
+        let signer_dir = net
+            .tmp
+            .path()
+            .join(format!("signer-{}", id.replace('/', "_")));
+        enroll_to_dir(
+            &net.central_url,
+            &net.ca_pem,
+            &mid,
+            &tok.enrollment_token,
+            &["127.0.0.1".into()],
+            &signer_dir,
+        )
+        .await
+        .unwrap();
+        signer_service::init(&signer_dir, &["127.0.0.1".to_string()]).unwrap();
+        let signer_port = free_port();
+        signer_handles.push(
+            signer_service::spawn(signer_service::SignerConfig {
+                dir: signer_dir.clone(),
+                listen: format!("127.0.0.1:{signer_port}"),
+                member: mid,
+                node: node_id.parse().unwrap(),
+                max_per_minute: 1000,
+            })
+            .await
+            .unwrap(),
+        );
+        // The node gets the member's certificate and CA, never its key.
+        let data = net
+            .tmp
+            .path()
+            .join(format!("node-{}", id.replace('/', "_")));
+        std::fs::create_dir_all(&data).unwrap();
+        for f in ["cert.pem", "ca.pem"] {
+            std::fs::copy(signer_dir.join(f), data.join(f)).unwrap();
+        }
+        hosted.push(Hosted {
+            member: Member {
+                id,
+                net_port: node_net,
+                int_port: node_int,
+                dir: data,
+            },
+            signer_dir,
+            signer_port,
+        });
+    }
+    let (a, b) = (&hosted[0], &hosted[1]);
+    let tok_b = "admin-token-b-0123456789";
+    let mut cfg_a = net.config_with(&a.member, false, "admin-token-a-0123456789", &[]);
+    let mut cfg_b = net.config_with(
+        &b.member,
+        true,
+        tok_b,
+        &["ZW/COM/11111111", "ZW/COM/33333333"],
+    );
+    for (cfg, h) in [(&mut cfg_a, a), (&mut cfg_b, b)] {
+        cfg.remote_signer = Some(RemoteSignerConfig {
+            url: format!("https://127.0.0.1:{}", h.signer_port),
+            ca_file: h.signer_dir.join("signer-ca.pem"),
+        });
+        cfg.node_identity_dir = Some(node_dir.clone());
+    }
+    let node = security_server::spawn_node(security_server::config::NodeConfig {
+        members: vec![cfg_a, cfg_b],
+        node_dir: net.tmp.path().join("node"),
+        node_identity: Some(NodeIdentityConfig {
+            member: node_id.parse().unwrap(),
+            dir: node_dir.clone(),
+        }),
+    })
+    .await
+    .unwrap();
+    // the stand-alone members learn about the node from their next directory refresh
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    for h in &hosted {
+        assert!(
+            !h.member.dir.join("key.pem").exists(),
+            "the node must not hold {}'s key",
+            h.member.id
+        );
+    }
+    let directory = || -> zroad_core::directory::Directory {
+        serde_json::from_slice(&std::fs::read(net.tmp.path().join("node/directory.json")).unwrap())
+            .unwrap()
+    };
+    let prefixed = |m: &Member, rest: &str| m.internal(&format!("/m/{}{rest}", m.id));
+    let a_url = prefixed(&a.member, SERVICE_PATH);
+    let a_to_zimra = || {
+        let url = a_url.clone();
+        async move {
+            post_json(
+                &url,
+                &[
+                    ("z-road-client", "ZW/COM/11111111/ap"),
+                    ("z-road-subject", "2000123456"),
+                ],
+                &json!({ "tin": "2000123456" }),
+            )
+            .await
+        }
+    };
+
+    // 1. A hosted consumer calls a stand-alone provider. The proof verifies
+    //    against A's own key, which only A's signer holds.
+    let (s, body, headers) = a_to_zimra().await;
+    assert_eq!(
+        (s, body["status"].as_str().unwrap()),
+        (200, "VALID"),
+        "{body}"
+    );
+    let (req, _) = directory().verify_proof(&read_proof(&headers)).unwrap();
+    assert_eq!(req.client.to_string(), "ZW/COM/11111111/ap");
+    //    ZIMRA records who spoke and which node carried it.
+    let zimra_log = audit::read_entries(&zimra.dir.join("audit/log.jsonl")).unwrap();
+    assert!(
+        zimra_log.iter().any(|e| matches!(&e.event,
+        audit::AuditEvent::Exchange { peer, via: Some(v), role, outcome, .. }
+            if peer == "ZW/COM/11111111" && v == node_id && role == "provider" && outcome == "ok")),
+        "{zimra_log:?}"
+    );
+    //    A's signer has its own record of the signature.
+    let signed = |dir: &Path| -> Vec<(String, String)> {
+        audit::read_entries(&dir.join("audit/log.jsonl"))
+            .unwrap()
+            .into_iter()
+            .filter_map(|e| match e.event {
+                audit::AuditEvent::Signed { kind, node, .. } => Some((kind, node)),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        signed(&a.signer_dir),
+        vec![("request".to_string(), node_id.to_string())]
+    );
+
+    // 2. A stand-alone consumer calls a hosted provider: the answer is signed by B's signer.
+    let (s, body, headers) = post_json(
+        &standalone.internal("/r1/ZW/COM/22222222/tax-clearance/verify/v1"),
+        &[("z-road-client", "ZW/COM/33333333/ap")],
+        &json!({ "tin": "2000123456" }),
+    )
+    .await;
+    assert_eq!(
+        (s, body["status"].as_str().unwrap()),
+        (200, "VALID"),
+        "{body}"
+    );
+    let (_, res) = directory().verify_proof(&read_proof(&headers)).unwrap();
+    assert_eq!(res.provider.to_string(), "ZW/COM/22222222");
+    assert_eq!(
+        signed(&b.signer_dir),
+        vec![("response".to_string(), node_id.to_string())]
+    );
+    //    Both hosted members on the same node can call each other.
+    let (s, _, _) = post_json(
+        &prefixed(&a.member, "/r1/ZW/COM/22222222/tax-clearance/verify/v1"),
+        &[("z-road-client", "ZW/COM/11111111/ap")],
+        &json!({ "tin": "2000123456" }),
+    )
+    .await;
+    assert_eq!(s, 200);
+
+    // 3. The node cannot forge a hosted member: signing with its own key is
+    //    rejected, and it cannot speak for a member it does not host.
+    let node_member = Member {
+        id: node_id,
+        net_port: node_net,
+        int_port: node_int,
+        dir: node_dir.clone(),
+    };
+    let as_node = RawClient::new(&node_member, &zimra);
+    let body = br#"{"tin":"2000123456"}"#;
+    let mut env = as_node.envelope(&random_id(), body);
+    env.client = "ZW/COM/11111111/ap".parse().unwrap();
+    let (s, v) = as_node.send(&env, body, None).await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (400, "bad_signature"),
+        "{v}"
+    );
+    let mut env = as_node.envelope(&random_id(), body);
+    env.client = "ZW/COM/33333333/ap".parse().unwrap();
+    let (s, v) = as_node.send(&env, body, None).await;
+    assert_eq!((s, v["error"].as_str().unwrap()), (403, "client_mismatch"));
+
+    // 4. A hosted member must come through its node, even though it holds a
+    //    valid certificate and key itself.
+    let direct = RawClient::new(
+        &Member {
+            id: "ZW/COM/11111111",
+            net_port: 0,
+            int_port: 0,
+            dir: a.signer_dir.clone(),
+        },
+        &zimra,
+    );
+    let (s, v) = direct
+        .send(&direct.envelope(&random_id(), body), body, None)
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (403, "hosted_member_must_use_node"),
+        "{v}"
+    );
+
+    // 5. The signer enforces its own policy, whatever the node asks for.
+    let read = |d: &Path, f: &str| std::fs::read_to_string(d.join(f)).unwrap();
+    let a_key = pki::inspect_cert_pem(&read(&a.signer_dir, "cert.pem"))
+        .unwrap()
+        .public_key;
+    let signer_url = format!("https://127.0.0.1:{}", a.signer_port);
+    let signer_ca = read(&a.signer_dir, "signer-ca.pem");
+    let as_caller = |who: &Path| {
+        let tls = tls::client_config(
+            &signer_ca,
+            Some((&read(who, "cert.pem"), &read(who, "key.pem"))),
+        )
+        .unwrap();
+        RemoteSigner::new(&signer_url, tls, a_key.clone())
+    };
+    let envelope_for = |client: &str| {
+        let mut e = as_node.envelope(&random_id(), body);
+        e.client = client.parse().unwrap();
+        signing_input(REQUEST_DOMAIN, &serde_json::to_vec(&e).unwrap())
+    };
+    let node_caller = as_caller(&node_dir);
+    assert!(node_caller
+        .sign_bytes(&envelope_for("ZW/COM/11111111/ap"))
+        .await
+        .is_ok());
+    let err = node_caller
+        .sign_bytes(&envelope_for("ZW/COM/22222222/ap"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not_our_request"), "{err}");
+    let err = node_caller
+        .sign_bytes(b"zroad/v1/timestamp\nwhatever")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("unsupported_domain"), "{err}");
+    let err = as_caller(&standalone.dir)
+        .sign_bytes(&envelope_for("ZW/COM/11111111/ap"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not_the_node"), "{err}");
+
+    // 6. Hosted providers are only reachable while their node is active.
+    //    (Done before taking signers down.)
+    // 7. If the member's signer is down, the node cannot act for it at all.
+    signer_handles.remove(0).shutdown();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let (s, v, h) = a_to_zimra().await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (503, "signer_unavailable"),
+        "{v}"
+    );
+    assert!(h.get("retry-after").is_some());
+
+    // 8. Revoking the node cuts off everything it hosts.
+    central
+        .revoke(&net.admin_token, &node_id.parse().unwrap())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let (s, v, _) = post_json(
+        &standalone.internal("/r1/ZW/COM/22222222/tax-clearance/verify/v1"),
+        &[("z-road-client", "ZW/COM/33333333/ap")],
+        &json!({ "tin": "2000123456" }),
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (404, "unknown_provider"),
+        "{v}"
+    );
+    node.shutdown();
 }

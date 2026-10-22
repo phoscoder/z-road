@@ -38,6 +38,23 @@ pub enum AuditEvent {
         outcome: String,
         /// Keyed hash of the data subject, never the subject itself.
         subject_ref: Option<String>,
+        /// The node that carried the request, when the peer spoke for a member
+        /// hosted on it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via: Option<String>,
+    },
+    /// Written by a member's own signer service: one entry per signature made on
+    /// the member's behalf, so a member can audit the node that hosts it.
+    Signed {
+        /// `request` or `response`.
+        kind: String,
+        message_id: String,
+        service: String,
+        /// The other party (the provider for requests, the consumer for responses),
+        /// when the signer knows it.
+        counterparty: Option<String>,
+        payload_sha256: String,
+        node: String,
     },
     Anchor {
         anchored_seq: u64,
@@ -254,6 +271,7 @@ mod tests {
             status: Some(200),
             outcome: "ok".into(),
             subject_ref: None,
+            via: None,
         }
     }
 

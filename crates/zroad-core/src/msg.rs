@@ -71,7 +71,8 @@ pub struct SignedMessage {
     pub signature_b64: String,
 }
 
-fn signing_input(domain: &str, payload: &[u8]) -> Vec<u8> {
+/// The exact bytes that are signed: `domain "\n" payload`.
+pub fn signing_input(domain: &str, payload: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(domain.len() + 1 + payload.len());
     v.extend_from_slice(domain.as_bytes());
     v.push(b'\n');
@@ -80,6 +81,20 @@ fn signing_input(domain: &str, payload: &[u8]) -> Vec<u8> {
 }
 
 impl SignedMessage {
+    /// Like [`sign`](Self::sign), for signers that may be remote.
+    pub async fn sign_async<T: Serialize>(
+        domain: &str,
+        value: &T,
+        signer: &dyn crypto::AsyncSigner,
+    ) -> Result<Self> {
+        let payload = serde_json::to_vec(value)?;
+        let sig = crypto::AsyncSigner::sign_bytes(signer, &signing_input(domain, &payload)).await?;
+        Ok(Self {
+            payload_b64: b64_encode(&payload),
+            signature_b64: b64_encode(&sig),
+        })
+    }
+
     pub fn sign<T: Serialize>(domain: &str, value: &T, signer: &dyn Signer) -> Result<Self> {
         let payload = serde_json::to_vec(value)?;
         let sig = signer.sign(&signing_input(domain, &payload));

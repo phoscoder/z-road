@@ -8,7 +8,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use rustls::ClientConfig;
 use zroad_core::audit::AuditLog;
-use zroad_core::crypto::Signer;
+use zroad_core::crypto::AsyncSigner;
 use zroad_core::directory::{Catalogue, Directory};
 use zroad_core::pki;
 use zroad_core::schema::CompiledSchema;
@@ -150,7 +150,7 @@ pub struct DedupeEntry {
 
 /// Everything that changes when a certificate is renewed.
 pub struct Identity {
-    pub signer: Arc<dyn Signer>,
+    pub signer: Arc<dyn AsyncSigner>,
     pub cert_pem: String,
     pub tls_client: Arc<ClientConfig>,
 }

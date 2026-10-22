@@ -4,6 +4,7 @@
 pub mod api;
 pub mod central_client;
 pub mod http_client;
+pub mod remote_signer;
 pub mod server;
 pub mod tls;
 

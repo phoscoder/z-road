@@ -16,6 +16,24 @@ pub trait Signer: Send + Sync {
     fn public_key(&self) -> Vec<u8>;
 }
 
+/// A signer that may be remote (a separate machine, an HSM): signing is async and
+/// can fail. Every [`Signer`] is also an `AsyncSigner`.
+#[async_trait::async_trait]
+pub trait AsyncSigner: Send + Sync {
+    async fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>>;
+    fn verifying_key(&self) -> Vec<u8>;
+}
+
+#[async_trait::async_trait]
+impl<T: Signer + ?Sized> AsyncSigner for T {
+    async fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>> {
+        Ok(Signer::sign(self, msg))
+    }
+    fn verifying_key(&self) -> Vec<u8> {
+        Signer::public_key(self)
+    }
+}
+
 pub struct SoftwareSigner(SigningKey);
 
 impl SoftwareSigner {
