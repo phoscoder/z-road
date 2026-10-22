@@ -3,6 +3,7 @@ name = "central-server"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Z-Road central server: certificate authority and member directory"
 
 [lints]

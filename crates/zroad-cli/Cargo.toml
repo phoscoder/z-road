@@ -3,6 +3,7 @@ name = "zroad-cli"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Command line tool for Z-Road administrators and auditors"
 
 [lints]

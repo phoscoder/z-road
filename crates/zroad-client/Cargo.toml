@@ -3,6 +3,7 @@ name = "zroad-client"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Rust client for a Z-Road security server's internal API (for ERP and application integrations)"
 
 [lints]

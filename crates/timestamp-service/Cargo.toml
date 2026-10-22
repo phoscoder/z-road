@@ -3,6 +3,7 @@ name = "timestamp-service"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Z-Road timestamp authority"
 
 [lints]

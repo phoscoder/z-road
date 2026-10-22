@@ -3,6 +3,7 @@ name = "zroad-net"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "TLS, HTTP client/server and enrolment helpers for Z-Road components"
 
 [lints]

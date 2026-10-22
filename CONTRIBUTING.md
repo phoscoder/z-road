@@ -20,3 +20,5 @@ Guidelines:
 * `unsafe` is forbidden in this workspace.
 * Code that parses untrusted input should get a fuzz target in `fuzz/` (see `fuzz/README.md`).
 * Prefer small dependencies from well-known maintainers and run `cargo audit`.
+
+By contributing you agree that your contribution is licensed under the [MIT licence](LICENSE).

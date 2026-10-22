@@ -3,6 +3,7 @@ name = "buyer-client"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Example consumer: checks a supplier tax clearance through a Z-Road security server"
 
 [lints]
