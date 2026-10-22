@@ -79,6 +79,19 @@ A provider accepts a peer only if the directory lists that member as `active`
 (compared by fingerprint). Revocation therefore takes effect within one refresh
 interval.
 
+## 4a. Service catalogue
+
+A provider publishes what it offers with `POST /v1/catalogue` on the central
+server (mutual TLS; the caller must be an `active` member presenting its
+registered certificate). The body replaces everything that member published
+before: `{services: [{id, title, description}]}` where `id` is
+`subsystem/service/version`. The central server derives the full service id
+from the authenticated member, so a member can only publish under its own name.
+`GET /v1/catalogue` lists every service of every *active* member; revoked members
+disappear. The catalogue says what exists and who offers it, never who may use
+it: access rules stay private to each provider. Security servers publish at
+startup and hourly, or on demand with `POST /admin/v1/catalogue/publish`.
+
 ## 5. Transport
 
 Provider security servers listen for `POST /zroad/v1/exchange` over TLS with
@@ -244,4 +257,4 @@ token is issued so they are never reused.
 * Verifying old proofs after a certificate rotation (the offline check uses the key in the current directory).
 * Federation between several Z-Road instances or with other X-Road deployments.
 * Streaming and large-object transfer (bodies are capped, default 2 MiB).
-* Consumer-side service discovery (a published catalogue of services).
+* Machine-readable request and response schemas in the catalogue.

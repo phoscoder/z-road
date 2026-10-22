@@ -33,6 +33,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/admin/v1/audit/status", get(audit_status))
         .route("/admin/v1/identity", get(identity))
         .route("/admin/v1/renew", post(renew_now))
+        .route("/admin/v1/catalogue/publish", post(publish_catalogue))
         .route("/admin/v1/proofs/:id", get(proof))
         .route("/admin/v1/directory/refresh", post(refresh_directory))
         .route("/admin/v1/anchor", post(anchor_now))
@@ -387,5 +388,16 @@ async fn renew_now(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respo
         Ok(fp) => Json(serde_json::json!({ "renewed": true, "certificate_fingerprint": fp }))
             .into_response(),
         Err(e) => error(StatusCode::BAD_GATEWAY, "renew_failed", e.to_string()),
+    }
+}
+
+/// Re-publish this member's services to the central catalogue now.
+async fn publish_catalogue(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = check_admin(&st, &headers) {
+        return r;
+    }
+    match crate::catalogue::publish(&st).await {
+        Ok(n) => Json(serde_json::json!({ "published": n })).into_response(),
+        Err(e) => error(StatusCode::BAD_GATEWAY, "publish_failed", format!("{e:#}")),
     }
 }

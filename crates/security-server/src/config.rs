@@ -10,6 +10,11 @@ pub struct ServiceConfig {
     pub id: String,
     /// Internal URL that answers requests for this service.
     pub upstream: String,
+    /// Shown in the public catalogue (defaults to the id).
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

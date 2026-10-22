@@ -61,6 +61,8 @@ anchor_interval_secs = 5
 [[services]]
 id = "tax-clearance/verify/v1"
 upstream = "http://127.0.0.1:9001/verify"
+title = "Tax clearance check"
+description = "Is this TIN cleared? Returns status and expiry only."
 
 [[access]]
 service = "tax-clearance/verify/v1"
@@ -79,6 +81,9 @@ bg "$BIN/security-server" run --config "$WORK/zimra.toml"
 bg "$BIN/security-server" run --config "$WORK/buyer.toml"
 sleep 2
 
+echo
+echo "==> what is on offer? (the public service catalogue)"
+"$CLI" catalogue --central $CENTRAL --ca "$CA"
 echo
 echo "==> buyer checks a valid supplier"
 "$BIN/buyer-client" --tin 2000123456 --proof-out "$WORK/proof.json"

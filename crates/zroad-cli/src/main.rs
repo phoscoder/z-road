@@ -57,6 +57,11 @@ enum Cmd {
         #[command(flatten)]
         central: Central,
     },
+    /// List the services offered on the network.
+    Catalogue {
+        #[command(flatten)]
+        central: Central,
+    },
     /// Generate a key, enrol with the central server and store the identity.
     Enroll {
         #[command(flatten)]
@@ -165,6 +170,19 @@ async fn main() -> Result<()> {
         Cmd::Directory { central } => {
             let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
             println!("{}", serde_json::to_string_pretty(&c.directory().await?)?);
+        }
+        Cmd::Catalogue { central } => {
+            let c = CentralClient::new(&central.central, &read_ca(&central.ca)?)?;
+            let cat = c.catalogue().await?;
+            if cat.entries.is_empty() {
+                println!("no services published");
+            }
+            for e in cat.entries {
+                println!("{}\n    {}", e.service, e.title);
+                if !e.description.is_empty() {
+                    println!("    {}", e.description);
+                }
+            }
         }
         Cmd::Enroll {
             central,

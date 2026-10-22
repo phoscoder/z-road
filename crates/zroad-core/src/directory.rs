@@ -39,3 +39,18 @@ impl Directory {
             .filter(|m| m.status == MemberStatus::Active && m.cert_pem.is_some())
     }
 }
+
+/// One published service in the catalogue.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CatalogueEntry {
+    pub service: crate::id::ServiceId,
+    pub title: String,
+    pub description: String,
+}
+
+/// Every service offered by an active member. The catalogue says what exists and
+/// who offers it, not who may use it: access rules stay private to each provider.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Catalogue {
+    pub entries: Vec<CatalogueEntry>,
+}

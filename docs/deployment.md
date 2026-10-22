@@ -78,6 +78,8 @@ renew_before_days      = 30      # renew the certificate automatically; 0 = off 
 [[services]]
 id       = "tax-clearance/verify/v1"
 upstream = "http://10.0.0.5:9001/verify"
+title    = "Tax clearance check"       # shown in the public catalogue (optional)
+description = "Is this TIN cleared? Returns status and expiry only."
 
 [[access]]
 service = "tax-clearance/verify/v1"
@@ -155,6 +157,8 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 | See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token … --subject 2000123456` |
 | Fetch a stored proof | `GET /admin/v1/proofs/<message_id>` |
 | Renew a certificate now | `POST /admin/v1/renew` on a running security server (automatic when under `renew_before_days`). Offline alternative: `zroad-cli renew --central … --dir … --san …`, then restart |
+| See what the network offers | `zroad-cli catalogue --central https://central.example.zw:8443 --ca ca.pem` |
+| Republish your services now | `POST /admin/v1/catalogue/publish` |
 | Check certificate expiry | `GET /admin/v1/identity` (a warning is also logged under 30 days) |
 | Demo citizen page | `citizen-portal --security-server http://127.0.0.1:7002 --admin-token … --directory <data_dir>/directory.json` (demo only: it does not authenticate citizens) |
 

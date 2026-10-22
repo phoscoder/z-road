@@ -4,6 +4,7 @@
 //! plain-HTTP one on a private address for the organisation's own systems.
 
 pub mod anchor;
+pub mod catalogue;
 pub mod config;
 pub mod consumer;
 pub mod internal;
@@ -128,6 +129,7 @@ pub async fn spawn_node(node: config::NodeConfig) -> Result<Running> {
         tasks.push(tokio::spawn(worker::outbox_loop(st.clone())));
         tasks.push(tokio::spawn(worker::anchor_loop(st.clone())));
         tasks.push(tokio::spawn(renew::renew_loop(st.clone())));
+        tasks.push(tokio::spawn(catalogue::publish_loop(st.clone())));
         tracing::info!("hosting member {}", st.cfg.member_id);
     }
     tracing::info!(

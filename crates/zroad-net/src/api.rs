@@ -45,3 +45,17 @@ pub struct ErrorBody {
 pub struct RenewRequest {
     pub csr_pem: String,
 }
+
+/// A service as a provider describes it; `id` is `subsystem/service/version`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogueItem {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+}
+
+/// Replaces everything the calling member has published.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishCatalogueRequest {
+    pub services: Vec<CatalogueItem>,
+}

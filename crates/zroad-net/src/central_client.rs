@@ -132,6 +132,18 @@ impl CentralClient {
         self.call("POST", "/v1/enroll", None, Self::json(req)).await
     }
 
+    pub async fn catalogue(&self) -> Result<zroad_core::directory::Catalogue> {
+        self.call("GET", "/v1/catalogue", None, None).await
+    }
+
+    /// Needs a client built with a member identity.
+    pub async fn publish_catalogue(&self, req: &PublishCatalogueRequest) -> Result<()> {
+        let _: serde_json::Value = self
+            .call("POST", "/v1/catalogue", None, Self::json(req))
+            .await?;
+        Ok(())
+    }
+
     pub async fn renew(&self, req: &RenewRequest) -> Result<EnrollResponse> {
         self.call("POST", "/v1/renew", None, Self::json(req)).await
     }
