@@ -160,7 +160,8 @@ impl Net {
 
     fn config_with(&self, m: &Member, provides: bool, admin: &str, allow: &[&str]) -> Config {
         let services = if provides {
-            json!([{ "id": "tax-clearance/verify/v1", "upstream": self.upstream_url }])
+            json!([{ "id": "tax-clearance/verify/v1", "upstream": self.upstream_url,
+                "title": "Tax clearance check", "description": "Is this TIN cleared? Returns status and expiry only." }])
         } else {
             json!([])
         };
@@ -1078,4 +1079,84 @@ async fn shared_node_hosts_several_members_in_isolation() {
     let (s, v) = raw.send(&env, body, None).await;
     assert_eq!((s, v["error"].as_str().unwrap()), (400, "wrong_provider"));
     running.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn catalogue_lists_services_of_active_members() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let _z = net.run(&zimra, true).await;
+    let _b = net.run(&buyer, false).await;
+    let public = CentralClient::new(&net.central_url, &net.ca_pem).unwrap();
+
+    // Services appear by themselves after startup.
+    let mut cat = public.catalogue().await.unwrap();
+    for _ in 0..20 {
+        if !cat.entries.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        cat = public.catalogue().await.unwrap();
+    }
+    assert_eq!(cat.entries.len(), 1, "{cat:?}");
+    assert_eq!(
+        cat.entries[0].service.to_string(),
+        "ZW/GOV/ZIMRA/tax-clearance/verify/v1"
+    );
+    assert_eq!(cat.entries[0].title, "Tax clearance check");
+
+    // Only a member with its current certificate can publish.
+    let anon = zroad_net::api::PublishCatalogueRequest {
+        services: vec![zroad_net::api::CatalogueItem {
+            id: "x/y/v1".into(),
+            title: "t".into(),
+            description: "d".into(),
+        }],
+    };
+    assert!(public.publish_catalogue(&anon).await.is_err());
+
+    // A member can only publish under its own id: the buyer's entry is attributed to the buyer.
+    let read = |f: &str| std::fs::read_to_string(buyer.dir.join(f)).unwrap();
+    let as_buyer = CentralClient::with_identity(
+        &net.central_url,
+        &read("ca.pem"),
+        &read("cert.pem"),
+        &read("key.pem"),
+    )
+    .unwrap();
+    as_buyer.publish_catalogue(&anon).await.unwrap();
+    let cat = public.catalogue().await.unwrap();
+    assert!(cat
+        .entries
+        .iter()
+        .any(|e| e.service.to_string() == "ZW/COM/12345678/x/y/v1"));
+    assert!(!cat
+        .entries
+        .iter()
+        .any(|e| e.service.member.to_string() != "ZW/COM/12345678" && e.service.service == "y"));
+
+    // The admin endpoint re-publishes on demand.
+    let r = zroad_net::request(
+        "POST",
+        &zimra.internal("/admin/v1/catalogue/publish"),
+        &[("authorization", &format!("Bearer {ADMIN}"))],
+        Bytes::new(),
+        None,
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status, 200);
+
+    // Revoked members vanish from the catalogue.
+    let c = CentralClient::new(&net.central_url, &net.ca_pem).unwrap();
+    c.revoke(&net.admin_token, &"ZW/GOV/ZIMRA".parse().unwrap())
+        .await
+        .unwrap();
+    let cat = public.catalogue().await.unwrap();
+    assert!(!cat
+        .entries
+        .iter()
+        .any(|e| e.service.member.to_string() == "ZW/GOV/ZIMRA"));
 }

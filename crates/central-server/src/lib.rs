@@ -13,7 +13,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use zroad_core::crypto::{ct_eq, sha256_hex};
-use zroad_core::directory::{Directory, MemberRecord, MemberStatus};
+use zroad_core::directory::{Catalogue, CatalogueEntry, Directory, MemberRecord, MemberStatus};
 use zroad_core::id::MemberId;
 use zroad_core::pki::{self, CertAuthority};
 use zroad_core::{now_ms, random_secret};
@@ -31,6 +31,9 @@ struct Stored {
     members: Vec<MemberRecord>,
     /// SHA-256 of each outstanding enrolment token, by member id.
     token_hashes: BTreeMap<String, String>,
+    /// Published services by member id.
+    #[serde(default)]
+    catalogue: BTreeMap<String, Vec<CatalogueEntry>>,
 }
 
 struct App {
@@ -95,6 +98,7 @@ pub async fn spawn(dir: &Path, addr: &str) -> Result<ServerHandle> {
         .route("/v1/directory", get(get_directory))
         .route("/v1/enroll", post(enroll))
         .route("/v1/renew", post(renew))
+        .route("/v1/catalogue", get(get_catalogue).post(publish_catalogue))
         .route("/v1/admin/members", post(add_member))
         .route("/v1/admin/revoke", post(revoke))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
@@ -320,4 +324,79 @@ async fn renew(
         cert_pem,
         ca_pem: app.ca.cert_pem.clone(),
     }))
+}
+
+/// Active members whose certificate is the one presented.
+fn authenticate_member(
+    st: &Stored,
+    peer: Option<PeerCert>,
+) -> std::result::Result<MemberId, ApiError> {
+    let denied = || {
+        ApiError(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "this needs the member's current, valid certificate".into(),
+        )
+    };
+    let info = pki::inspect_cert_der(&peer.ok_or_else(denied)?.0).map_err(|_| denied())?;
+    let registered = st
+        .members
+        .iter()
+        .find(|m| m.id == info.member && m.status == MemberStatus::Active)
+        .and_then(|m| m.cert_pem.as_deref())
+        .and_then(|p| pki::inspect_cert_pem(p).ok())
+        .ok_or_else(denied)?;
+    if registered.fingerprint != info.fingerprint {
+        return Err(denied());
+    }
+    Ok(info.member)
+}
+
+async fn get_catalogue(State(app): State<Arc<App>>) -> Json<Catalogue> {
+    let st = app.state.lock().unwrap_or_else(|p| p.into_inner());
+    let active = |id: &str| {
+        st.members
+            .iter()
+            .any(|m| m.id.to_string() == id && m.status == MemberStatus::Active)
+    };
+    let mut entries: Vec<CatalogueEntry> = st
+        .catalogue
+        .iter()
+        .filter(|(id, _)| active(id))
+        .flat_map(|(_, v)| v.iter().cloned())
+        .collect();
+    entries.sort_by_key(|e| e.service.to_string());
+    Json(Catalogue { entries })
+}
+
+const MAX_SERVICES_PER_MEMBER: usize = 200;
+
+async fn publish_catalogue(
+    State(app): State<Arc<App>>,
+    Extension(peer): Extension<Option<PeerCert>>,
+    Json(req): Json<PublishCatalogueRequest>,
+) -> ApiResult<serde_json::Value> {
+    let mut st = app.state.lock().unwrap_or_else(|p| p.into_inner());
+    let member = authenticate_member(&st, peer)?;
+    if req.services.len() > MAX_SERVICES_PER_MEMBER {
+        return Err(bad("too many services"));
+    }
+    let mut entries = Vec::new();
+    for item in req.services {
+        let service: zroad_core::id::ServiceId = format!("{member}/{}", item.id)
+            .parse()
+            .map_err(|e: zroad_core::Error| bad(e.to_string()))?;
+        if item.title.len() > 100 || item.description.len() > 500 {
+            return Err(bad("title (100) or description (500) too long"));
+        }
+        entries.push(CatalogueEntry {
+            service,
+            title: item.title,
+            description: item.description,
+        });
+    }
+    let n = entries.len();
+    st.catalogue.insert(member.to_string(), entries);
+    save(&app.state_path, &st).map_err(internal)?;
+    Ok(Json(serde_json::json!({ "published": n })))
 }
