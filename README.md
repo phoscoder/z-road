@@ -218,7 +218,7 @@ Not started: member-held keys on shared nodes, a service catalogue, ERP plug-ins
 - [Running Z-Road](docs/deployment.md)
 - [Legal and regulatory considerations](docs/legal-considerations.md)
 - [Pilot plan](docs/pilot-plan.md)
-- [Design note: shared security servers](docs/design/shared-nodes.md) (proposal)
+- [Design note: shared security servers](docs/design/shared-nodes.md) (partly implemented)
 - [Security policy](SECURITY.md) and [contributing guide](CONTRIBUTING.md)
 
 ## Contributing
