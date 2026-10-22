@@ -165,6 +165,7 @@ z-road/
     buyer-client/       sample consumer
     citizen-portal/     demo "who looked at my data?" page
   scripts/demo.sh       run a complete local network and make a signed, logged request
+  Dockerfile, deploy/   container image, a Docker Compose network, systemd units, smoke tests
   docs/                 protocol, threat model, deployment, legal considerations, pilot plan
 ```
 
@@ -175,6 +176,7 @@ You need a recent stable Rust toolchain.
 ```sh
 cargo test --workspace      # unit and end-to-end tests
 scripts/demo.sh             # a full local network, step by step
+docker compose -f deploy/docker-compose.yml up --build --wait   # the same, in containers
 ```
 
 The demo starts a central server, a timestamp authority, a mock ZIMRA clearance system and two security servers, then:
@@ -211,7 +213,7 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [x] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
 - [x] **Phase 3: Resilience.** Durable outbox, retries with backoff, idempotent redelivery, cached directory.
 - [x] **Phase 4: Transparency.** Access log by data subject and a demo citizen page (`examples/citizen-portal`). A real citizen-facing service still needs identity proofing of the citizen.
-- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, coverage-guided fuzzing of the parsers (`fuzz/`), fail-closed audit logging with a write-ahead record, replay cache rebuilt after restarts, automatic certificate renewal with two-phase rotation, `unsafe` forbidden, clippy in CI. Still open: a real citizen login integration (the assertion mechanism is built; the login itself is per provider), HSM-backed keys, offline root CA, longer fuzz campaigns, and an independent security review.
+- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, coverage-guided fuzzing of the parsers (`fuzz/`), fail-closed audit logging with a write-ahead record, replay cache rebuilt after restarts, automatic certificate renewal with two-phase rotation, `unsafe` forbidden, clippy in CI. Packaging (Docker Compose, systemd) exists but its container half is checked only by CI (see [packaging](docs/packaging.md)). Still open: a real citizen login integration (the assertion mechanism is built; the login itself is per provider), HSM-backed keys, offline root CA, longer fuzz campaigns, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
 Not started: ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
@@ -221,6 +223,7 @@ Not started: ready-made plug-ins for specific ERP products (the HTTP API, an Ope
 - [Protocol specification](docs/protocol.md)
 - [Threat model](docs/threat-model.md)
 - [Running Z-Road](docs/deployment.md)
+- [Packaging: Docker Compose and systemd](docs/packaging.md)
 - [Access control: operators, roles and citizen login](docs/access-control.md)
 - [Integrating an application](docs/integration.md) and the [internal API (OpenAPI)](docs/openapi-internal.yaml)
 - [Legal and regulatory considerations](docs/legal-considerations.md)

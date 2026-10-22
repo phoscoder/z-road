@@ -1,0 +1,48 @@
+[Unit]
+Description=Z-Road security server (%i)
+Documentation=https://github.com/phoscoder/z-road/blob/main/docs/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zroad
+Group=zroad
+# One instance per config file: systemctl enable --now zroad-security-server@zimra
+# reads /etc/zroad/zimra.toml. Use absolute data_dir paths under /var/lib/zroad/%i.
+ExecStart=/usr/local/bin/security-server run --config /etc/zroad/%i.toml
+ExecStartPre=/usr/local/bin/security-server check-config --config /etc/zroad/%i.toml
+Restart=on-failure
+RestartSec=5
+StateDirectory=zroad/%i
+StateDirectoryMode=0700
+ConfigurationDirectory=zroad
+ConfigurationDirectoryMode=0750
+ReadWritePaths=/var/lib/zroad/%i
+# Hardening: no new privileges, read-only system, private /tmp, no devices, no
+# kernel tunables, only network sockets, no executable memory tricks.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

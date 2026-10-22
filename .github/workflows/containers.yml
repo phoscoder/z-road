@@ -1,0 +1,43 @@
+name: Containers
+
+on:
+  push:
+    branches: [main]
+    paths: [Dockerfile, .dockerignore, deploy/**, .github/workflows/containers.yml]
+  pull_request:
+    paths: [Dockerfile, .dockerignore, deploy/**, .github/workflows/containers.yml]
+  workflow_dispatch:
+
+jobs:
+  # The same network as the compose file, as plain processes: no Docker needed.
+  smoke-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace
+      - run: deploy/smoke-host.sh
+
+  # The image and the compose network for real.
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f deploy/docker-compose.yml config --quiet
+      - run: deploy/smoke-compose.sh
+
+  systemd-units:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the unit files
+        run: |
+          for b in central-server timestamp-service security-server signer-service; do
+            printf '#!/bin/sh\n' | sudo tee /usr/local/bin/$b >/dev/null; sudo chmod +x /usr/local/bin/$b
+          done
+          cd deploy/systemd
+          for u in zroad-central.service zroad-timestamp.service zroad-security-server@.service zroad-signer.service; do
+            systemd-analyze verify "$PWD/$u"
+          done
+          bash -n install.sh
