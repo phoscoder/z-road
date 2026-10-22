@@ -2,7 +2,6 @@
 name = "zroad-core"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 publish.workspace = true
 description = "Z-Road protocol types: identifiers, signed messages, PKI helpers and the tamper-evident audit log"
 

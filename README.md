@@ -4,7 +4,7 @@
 
 Z-Road lets government agencies, banks, companies and other organisations query each other's data directly, safely and with a full audit trail, without anyone building a single central database. It is inspired by Estonia's [X-Road](https://x-road.global/) and designed around the realities of Zimbabwe: patchy connectivity, power cuts, modest hardware and the need for public trust.
 
-> **Status: concept / early design.** Nothing here is production software yet. The first milestone is a working proof of concept (see the [Roadmap](#roadmap)).
+> **Status: working proof of concept.** The protocol, security server, central server, timestamp authority and a first use case run end to end and are covered by automated tests. It has **not** had an independent security review and is **not** ready for real data. See the [Roadmap](#roadmap) and the [threat model](docs/threat-model.md).
 
 ---
 
@@ -18,9 +18,11 @@ Z-Road lets government agencies, banks, companies and other organisations query 
 - [Joining the network](#joining-the-network)
 - [Zimbabwe-specific design considerations](#zimbabwe-specific-design-considerations)
 - [Why Rust](#why-rust)
-- [Planned repository layout](#planned-repository-layout)
-- [Roadmap](#roadmap)
+- [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
+- [What works today](#what-works-today)
+- [Roadmap](#roadmap)
+- [Documentation](#documentation)
 - [Contributing](#contributing)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
@@ -142,38 +144,78 @@ The security server sits at the edge of every organisation and must be hard to b
 - Strong ecosystem for the job: `tokio` and `axum` for networking, `rustls` for mTLS, `ring` or `aws-lc-rs` for cryptography, `serde` for message formats.
 - Single static binaries are easy to deploy on constrained machines.
 
-## Planned repository layout
+## Repository layout
 
-This will be a single Cargo workspace so the protocol code is shared and end-to-end tests are simple. It can be split later if separate owners or release cycles emerge.
+A single Cargo workspace, so the protocol code is shared and end-to-end tests are simple. It can be split later if separate owners or release cycles emerge.
 
 ```
 z-road/
-  Cargo.toml              workspace
   crates/
-    zroad-core/           message format, IDs, signing, log types
-    security-server/      the main binary (axum + rustls)
-    central-server/       member registry and certificate issuing
-    timestamp-service/    starts as a stub
+    zroad-core/         identifiers, signed messages, PKI helpers, hash-chained audit log
+    zroad-net/          mutual TLS, small HTTP client, server with peer certificates, central API client
+    security-server/    the main binary: provider and consumer sides, outbox, audit anchoring
+    central-server/     certificate authority and member directory
+    timestamp-service/  trusted timestamps for audit log anchoring
+    zroad-cli/          admin and audit tool: enrol, revoke, verify logs and proofs, citizen access log
+    e2e-tests/          whole-network tests over real mutual TLS
   examples/
-    zimra-clearance/      sample provider service
-    buyer-client/         sample consumer
-  deploy/                 docker-compose, test certificates
-  docs/                   architecture, diagrams, legal notes
+    zimra-clearance/    mock provider system (tax clearance check)
+    buyer-client/       sample consumer
+  scripts/demo.sh       run a complete local network and make a signed, logged request
+  docs/                 protocol, threat model, deployment, legal considerations, pilot plan
 ```
-
-## Roadmap
-
-- [ ] **Phase 0: Design.** Protocol spec, addressing scheme, threat model.
-- [ ] **Phase 1: Proof of concept.** Two security servers exchanging signed, logged requests over mTLS, plus a minimal central server.
-- [ ] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
-- [ ] **Phase 3: Resilience.** Message queueing, retries, offline tolerance.
-- [ ] **Phase 4: Transparency.** Citizen-facing access log.
-- [ ] **Phase 5: Hardening.** Security review, trusted timestamping, HSM support, formal spec.
-- [ ] **Phase 6: Pilot.** Legal review and a pilot with willing institutions.
 
 ## Getting started
 
-There is no code to run yet. Once the proof of concept lands, this section will cover building the workspace, generating test certificates and running two nodes locally with `docker compose`.
+You need a recent stable Rust toolchain.
+
+```sh
+cargo test --workspace      # unit and end-to-end tests
+scripts/demo.sh             # a full local network, step by step
+```
+
+The demo starts a central server, a timestamp authority, a mock ZIMRA clearance system and two security servers, then:
+
+1. a buyer checks a supplier's tax clearance (`VALID`), and another that is `EXPIRED`;
+2. the signed proof of the exchange is verified offline;
+3. ZIMRA's log is queried for who looked up that TIN (the citizen's view);
+4. the audit log is verified, including its trusted timestamp.
+
+See [docs/deployment.md](docs/deployment.md) for setting up a network by hand and the configuration reference.
+
+## What works today
+
+| Area | Implemented |
+| --- | --- |
+| Identity | Private CA; Ed25519 member keys; enrolment with one-time tokens; certificate subject always the member id |
+| Transport | Mutual TLS between security servers (`rustls`, `ring`) |
+| Messages | Signed requests and responses, bound together by hash; body hashes; ±5 minute clock window |
+| Access control | Per-service, default-deny rules evaluated by the provider; revocation through the directory |
+| Replay and retries | Per-peer message id cache; identical retries are idempotent |
+| Resilience | Durable async outbox with backoff; cached directory keeps working if the central server is down |
+| Accountability | Hash-chained audit log on both sides, refuses to start on a broken chain, periodic trusted-timestamp anchors |
+| Proofs | A signed proof header on every answer, verifiable offline with `zroad-cli proof-verify` |
+| Transparency | Provider-side "who looked up this subject" query, without storing the subject in clear |
+
+## Roadmap
+
+- [x] **Phase 0: Design.** [Protocol spec](docs/protocol.md), addressing scheme, [threat model](docs/threat-model.md).
+- [x] **Phase 1: Proof of concept.** Security servers exchanging signed, logged requests over mTLS, plus a central server.
+- [x] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
+- [x] **Phase 3: Resilience.** Durable outbox, retries with backoff, idempotent redelivery, cached directory.
+- [x] **Phase 4: Transparency (backend).** Access log by data subject. A citizen-facing page with proper identity proofing is still to do.
+- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, durable replay cache, certificate renewal, fuzzing, and an independent security review.
+- [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
+
+Not started: shared security servers hosting many members, a service catalogue, ERP plug-ins.
+
+## Documentation
+
+- [Protocol specification](docs/protocol.md)
+- [Threat model](docs/threat-model.md)
+- [Running Z-Road](docs/deployment.md)
+- [Legal and regulatory considerations](docs/legal-considerations.md)
+- [Pilot plan](docs/pilot-plan.md)
 
 ## Contributing
 
@@ -184,7 +226,7 @@ Ideas, critique and contributions are welcome at this early stage, particularly 
 - Rust implementation
 - Real-world use cases and pilot partners
 
-Open an issue to start a discussion.
+Open an issue to start a discussion. Before sending code, run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
 
 ## Acknowledgements
 

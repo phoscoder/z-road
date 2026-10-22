@@ -2,7 +2,6 @@
 name = "buyer-client"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 publish.workspace = true
 description = "Example consumer: checks a supplier tax clearance through a Z-Road security server"
 
