@@ -240,7 +240,7 @@ token is issued so they are never reused.
 
 ## 10. What is not specified yet
 
-* Multiple members behind one shared security server.
+* Member-held keys for members on a shared security server (today the operator holds them).
 * Verifying old proofs after a certificate rotation (the offline check uses the key in the current directory).
 * Federation between several Z-Road instances or with other X-Road deployments.
 * Streaming and large-object transfer (bodies are capped, default 2 MiB).

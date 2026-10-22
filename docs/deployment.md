@@ -91,6 +91,40 @@ security-server run --config zimra.toml
 
 A pure consumer has no `[[services]]` or `[[access]]`.
 
+## Shared nodes
+
+One security server process can host several members, for example an accounting
+vendor serving its small customers. Each member is enrolled separately (own key,
+own certificate, same endpoint host) and keeps its own state. Use a node file:
+
+```toml
+central_url     = "https://central.example.zw:8443"
+network_listen  = "0.0.0.0:7443"
+internal_listen = "10.0.0.5:7001"
+node_dir        = "node"                  # directory cache
+
+[[members]]
+member_id   = "ZW/COM/11111111"
+data_dir    = "acme"
+admin_token = "a-long-random-token-for-acme"
+internal_token = "another-token-for-acme-systems"
+
+[[members]]
+member_id   = "ZW/COM/22222222"
+data_dir    = "bravo"
+admin_token = "a-different-long-token-for-bravo"
+```
+
+Each member's internal API lives under its own prefix:
+`/m/ZW/COM/11111111/r1/ZW/GOV/ZIMRA/tax-clearance/verify/v1`, with admin
+endpoints at `/m/ZW/COM/11111111/admin/v1/...`. Tokens, audit logs, outboxes,
+proofs and access rules are per member, and a member's internal API only accepts
+its own `Z-Road-Client` subsystems. Members must not share a `data_dir` or an
+admin token (startup refuses). The operator holds every hosted member's private
+key, so the operator can sign as them: only use this where the legal agreement
+between member and operator says so. A single-member file in the original format
+still works, and a single-member node also serves the unprefixed paths.
+
 ## Calling a service
 
 From the consumer's own systems:

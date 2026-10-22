@@ -109,7 +109,7 @@ pub struct AppState {
     pub server_cert: Arc<zroad_net::tls::ReloadableCert>,
     pub renewing: tokio::sync::Mutex<()>,
     pub audit: Arc<AuditLog>,
-    pub dir: DirectoryCache,
+    pub dir: Arc<DirectoryCache>,
     pub dedupe: Mutex<HashMap<String, DedupeEntry>>,
     pub rate: Mutex<HashMap<String, (u64, u32)>>,
     pub subject_key: Vec<u8>,
@@ -137,5 +137,25 @@ impl AppState {
 
     pub fn own_info(&self) -> Result<pki::CertInfo> {
         pki::inspect_cert_pem(&self.identity().cert_pem).map_err(|e| anyhow::anyhow!("{e}"))
+    }
+}
+
+/// A security server process: one or more hosted members behind shared
+/// listeners.
+pub struct Node {
+    pub members: HashMap<zroad_core::id::MemberId, Arc<AppState>>,
+    /// The one hosted member, when there is exactly one (the common case).
+    pub only: Option<Arc<AppState>>,
+}
+
+impl Node {
+    pub fn new(states: &[Arc<AppState>]) -> Self {
+        Self {
+            members: states
+                .iter()
+                .map(|s| (s.cfg.member_id.clone(), s.clone()))
+                .collect(),
+            only: (states.len() == 1).then(|| states[0].clone()),
+        }
     }
 }
