@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="960" height="480" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title>The journey of one request</title><desc>Six steps from an application's question to a signed, provable answer.</desc>
+<defs><marker id="a-64748B" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker><marker id="a-E6B800" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#E6B800"/></marker><marker id="a-2B4A9B" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2B4A9B"/></marker><marker id="a-B42318" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B42318"/></marker><marker id="a-1F7A4D" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F7A4D"/></marker><marker id="a-0F172A" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F172A"/></marker><marker id="a-94A3B8" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94A3B8"/></marker><marker id="a-9B1C1C" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9B1C1C"/></marker><filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.12"/></filter></defs>
+<rect x="0.5" y="0.5" width="959" height="479" rx="18" fill="#FBFCFA" stroke="#DDE5DF"/>
+<rect x="0.5" y="0.5" width="959" height="6" rx="3" fill="#1F7A4D"/>
+<text x="40" y="44" font-size="22" font-weight="700" fill="#0F172A">The journey of one request</text><text x="40" y="66" font-size="13" fill="#64748B">What happens when a company checks a supplier's tax clearance.</text>
+<rect x="30" y="110" width="140" height="190" rx="14" fill="#FFFFFF" stroke="#C9DDD0" stroke-width="1.2" filter="url(#sh)"/>
+<circle cx="54" cy="138" r="13" fill="#1F7A4D" stroke="none" stroke-width="0"/>
+<text x="54" y="142.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+<text x="76" y="143" font-size="14" font-weight="700" fill="#0F172A" text-anchor="start">Ask</text>
+<text x="44" y="176" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">The application</text>
+<text x="44" y="193" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">calls its own</text>
+<text x="44" y="210" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">security server</text>
+<text x="44" y="227" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">over private HTTP.</text>
+<line x1="170" y1="205" x2="182" y2="205" stroke="#1F7A4D" stroke-width="2.2" marker-end="url(#a-1F7A4D)"/>
+<rect x="182" y="110" width="140" height="190" rx="14" fill="#EAF4EE" stroke="#1F7A4D" stroke-width="1.2" filter="url(#sh)"/>
+<circle cx="206" cy="138" r="13" fill="#1F7A4D" stroke="none" stroke-width="0"/>
+<text x="206" y="142.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+<text x="228" y="143" font-size="14" font-weight="700" fill="#0F172A" text-anchor="start">Sign</text>
+<text x="196" y="176" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Schema check, then</text>
+<text x="196" y="193" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">the request is</text>
+<text x="196" y="210" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">signed and logged.</text>
+<line x1="322" y1="205" x2="334" y2="205" stroke="#1F7A4D" stroke-width="2.2" marker-end="url(#a-1F7A4D)"/>
+<rect x="334" y="110" width="140" height="190" rx="14" fill="#FFFFFF" stroke="#C9DDD0" stroke-width="1.2" filter="url(#sh)"/>
+<circle cx="358" cy="138" r="13" fill="#1F7A4D" stroke="none" stroke-width="0"/>
+<text x="358" y="142.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+<text x="380" y="143" font-size="14" font-weight="700" fill="#0F172A" text-anchor="start">Send</text>
+<text x="348" y="176" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Mutual TLS to the</text>
+<text x="348" y="193" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">provider's security</text>
+<text x="348" y="210" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">server.</text>
+<line x1="474" y1="205" x2="486" y2="205" stroke="#1F7A4D" stroke-width="2.2" marker-end="url(#a-1F7A4D)"/>
+<rect x="486" y="110" width="140" height="190" rx="14" fill="#EAF4EE" stroke="#1F7A4D" stroke-width="1.2" filter="url(#sh)"/>
+<circle cx="510" cy="138" r="13" fill="#1F7A4D" stroke="none" stroke-width="0"/>
+<text x="510" y="142.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">4</text>
+<text x="532" y="143" font-size="14" font-weight="700" fill="#0F172A" text-anchor="start">Verify</text>
+<text x="500" y="176" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Member active?</text>
+<text x="500" y="193" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Signature valid?</text>
+<text x="500" y="210" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Allowed? Schema ok?</text>
+<text x="500" y="227" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Not a replay?</text>
+<text x="500" y="244" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Logged first.</text>
+<line x1="626" y1="205" x2="638" y2="205" stroke="#1F7A4D" stroke-width="2.2" marker-end="url(#a-1F7A4D)"/>
+<rect x="638" y="110" width="140" height="190" rx="14" fill="#FFFFFF" stroke="#C9DDD0" stroke-width="1.2" filter="url(#sh)"/>
+<circle cx="662" cy="138" r="13" fill="#1F7A4D" stroke="none" stroke-width="0"/>
+<text x="662" y="142.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">5</text>
+<text x="684" y="143" font-size="14" font-weight="700" fill="#0F172A" text-anchor="start">Answer</text>
+<text x="652" y="176" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">The provider's</text>
+<text x="652" y="193" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">system answers; the</text>
+<text x="652" y="210" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">answer is signed.</text>
+<line x1="778" y1="205" x2="790" y2="205" stroke="#1F7A4D" stroke-width="2.2" marker-end="url(#a-1F7A4D)"/>
+<rect x="790" y="110" width="140" height="190" rx="14" fill="#EAF4EE" stroke="#1F7A4D" stroke-width="1.2" filter="url(#sh)"/>
+<circle cx="814" cy="138" r="13" fill="#1F7A4D" stroke="none" stroke-width="0"/>
+<text x="814" y="142.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">6</text>
+<text x="836" y="143" font-size="14" font-weight="700" fill="#0F172A" text-anchor="start">Prove</text>
+<text x="804" y="176" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">The consumer</text>
+<text x="804" y="193" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">verifies it and</text>
+<text x="804" y="210" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">keeps the proof.</text>
+<rect x="30" y="322" width="444" height="30" rx="10" fill="#EAF4EE" stroke="none" stroke-width="0"/>
+<text x="252" y="342" font-size="12" font-weight="700" fill="#1F7A4D" text-anchor="middle">consumer side</text>
+<rect x="486" y="322" width="292" height="30" rx="10" fill="#FFF3C4" stroke="none" stroke-width="0"/>
+<text x="632" y="342" font-size="12" font-weight="700" fill="#6B5200" text-anchor="middle">provider side</text>
+<rect x="790" y="322" width="140" height="30" rx="10" fill="#EAF4EE" stroke="none" stroke-width="0"/>
+<text x="860" y="342" font-size="12" font-weight="700" fill="#1F7A4D" text-anchor="middle">consumer side</text>
+<rect x="30" y="380" width="900" height="76" rx="12" fill="#FFFFFF" stroke="#C9DDD0" stroke-width="1.2"/>
+<text x="48" y="404" font-size="12.5" font-weight="700" fill="#0F172A" text-anchor="start">Left behind, on both sides:</text>
+<text x="48" y="426" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">a hash-chained audit entry (with the date proven by the timestamp authority), and the signed proof of the exchange.</text>
+<text x="48" y="444" font-size="12" font-weight="400" fill="#64748B" text-anchor="start">Nothing is stored centrally. Neither side can quietly rewrite what happened.</text>
+</svg>
