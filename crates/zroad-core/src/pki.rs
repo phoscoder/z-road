@@ -78,6 +78,9 @@ impl CertAuthority {
         valid_days: i64,
     ) -> Result<String> {
         let mut csr = CertificateSigningRequestParams::from_pem(csr_pem).map_err(pki)?;
+        if csr.public_key.algorithm() != &PKCS_ED25519 {
+            return Err(Error::Pki("members must use Ed25519 keys".into()));
+        }
         if csr.params.subject_alt_names.is_empty() {
             return Err(Error::Pki("CSR has no subject alternative names".into()));
         }
@@ -196,6 +199,14 @@ mod tests {
         let info = inspect_cert_pem(&pem).unwrap();
         assert_eq!(info.member, member);
         assert_eq!(info.public_key.len(), 32);
+        // only Ed25519 keys are accepted
+        let ecdsa = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec!["zimra.test".to_string()]).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        let csr = params.serialize_request(&ecdsa).unwrap().pem().unwrap();
+        assert!(reloaded
+            .sign_csr(&csr, &member, &["zimra.test".to_string()], 30)
+            .is_err());
         // a SAN outside the allow-list is refused
         assert!(reloaded
             .sign_csr(&id.csr_pem, &member, &["127.0.0.1".to_string()], 30)

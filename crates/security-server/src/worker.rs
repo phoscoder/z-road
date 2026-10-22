@@ -1,6 +1,7 @@
 //! Background jobs: directory refresh, outbox delivery, log anchoring.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -34,11 +35,29 @@ pub async fn anchor_loop(st: Arc<AppState>) {
     }
 }
 
+/// At most this many outbox items are in flight at once.
+const OUTBOX_CONCURRENCY: usize = 16;
+
 pub async fn outbox_loop(st: Arc<AppState>) {
+    let in_flight: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;
         for item in st.outbox.due() {
-            deliver(&st, item).await;
+            {
+                let mut set = in_flight.lock().unwrap_or_else(|p| p.into_inner());
+                if set.len() >= OUTBOX_CONCURRENCY || !set.insert(item.id.clone()) {
+                    continue;
+                }
+            }
+            let (st, in_flight) = (st.clone(), in_flight.clone());
+            tokio::spawn(async move {
+                let id = item.id.clone();
+                deliver(&st, item).await;
+                in_flight
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&id);
+            });
         }
     }
 }

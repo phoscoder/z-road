@@ -90,6 +90,11 @@ pub async fn call(st: &AppState, p: &CallParams) -> Result<CallSuccess, CallErro
             p.client, st.cfg.member_id
         )));
     }
+    if p.subject.as_deref().is_some_and(|s| s.len() > 256) {
+        return Err(CallError::Invalid(
+            "Z-Road-Subject is longer than 256 bytes".into(),
+        ));
+    }
     let message_id = p.message_id.clone().unwrap_or_else(random_id);
     let envelope = RequestEnvelope {
         version: PROTOCOL_VERSION,

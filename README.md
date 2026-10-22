@@ -208,7 +208,7 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, scheduled renewal with hot reload, coverage-guided fuzzing, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
-Not started: shared security servers hosting many members, a service catalogue, ERP plug-ins.
+Not started: shared security servers hosting many members (a [design note](docs/design/shared-nodes.md) exists), a service catalogue, ERP plug-ins.
 
 ## Documentation
 
@@ -217,6 +217,8 @@ Not started: shared security servers hosting many members, a service catalogue, 
 - [Running Z-Road](docs/deployment.md)
 - [Legal and regulatory considerations](docs/legal-considerations.md)
 - [Pilot plan](docs/pilot-plan.md)
+- [Design note: shared security servers](docs/design/shared-nodes.md) (proposal)
+- [Security policy](SECURITY.md) and [contributing guide](CONTRIBUTING.md)
 
 ## Contributing
 

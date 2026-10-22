@@ -112,8 +112,9 @@ pub fn verify_file(path: &Path) -> Result<VerifyReport> {
             token,
         } = &e.event
         {
-            let target = entries
-                .get(*anchored_seq as usize - 1)
+            let target = (*anchored_seq as usize)
+                .checked_sub(1)
+                .and_then(|i| entries.get(i))
                 .ok_or_else(|| Error::Audit(format!("entry {}: anchors a missing entry", e.seq)))?;
             if &target.hash != anchored_hash || &token.digest != anchored_hash {
                 return Err(Error::Audit(format!(
@@ -272,6 +273,39 @@ mod tests {
             .map(|(_, l)| l)
             .collect();
         std::fs::write(&p, kept.join("\n") + "\n").unwrap();
+        assert!(verify_file(&p).is_err());
+    }
+}
+
+#[cfg(test)]
+mod hostile_log_tests {
+    use super::*;
+
+    #[test]
+    fn anchor_pointing_at_entry_zero_is_an_error_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("log.jsonl");
+        let token = TimestampToken {
+            tsa: "ZW/SYS/tsa".parse().unwrap(),
+            digest: GENESIS_HASH.into(),
+            time_ms: 1,
+            serial: 1,
+            signature_b64: String::new(),
+        };
+        let event = AuditEvent::Anchor {
+            anchored_seq: 0,
+            anchored_hash: GENESIS_HASH.into(),
+            token,
+        };
+        let hash = entry_hash(1, 1, GENESIS_HASH, &event).unwrap();
+        let entry = AuditEntry {
+            seq: 1,
+            ts_ms: 1,
+            prev_hash: GENESIS_HASH.into(),
+            event,
+            hash,
+        };
+        std::fs::write(&p, serde_json::to_string(&entry).unwrap() + "\n").unwrap();
         assert!(verify_file(&p).is_err());
     }
 }

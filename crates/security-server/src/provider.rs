@@ -52,13 +52,29 @@ pub async fn exchange(
     let mut a = Attempt::default();
     match process(&st, peer, &body, &mut a).await {
         Ok((resp, status, response_sha, duplicate)) => {
-            log(
+            // Fail closed: an answer that cannot be recorded is not delivered.
+            // The consumer retries; the message id makes that idempotent.
+            let recorded = log(
                 &st,
                 &a,
                 if duplicate { "duplicate" } else { "ok" }.into(),
                 Some(status),
                 Some(response_sha),
             );
+            if !recorded {
+                let mut r = (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorBody {
+                        error: "audit_unavailable".into(),
+                        message: "the provider cannot record this exchange, so it did not answer"
+                            .into(),
+                    }),
+                )
+                    .into_response();
+                r.headers_mut()
+                    .insert("z-road-error", "audit_unavailable".parse().expect("static"));
+                return r;
+            }
             Json(resp).into_response()
         }
         Err(r) => {
@@ -83,13 +99,14 @@ pub async fn exchange(
     }
 }
 
+/// Write the audit record. Returns false if it could not be written.
 fn log(
     st: &AppState,
     a: &Attempt,
     outcome: String,
     status: Option<u16>,
     response_sha: Option<String>,
-) {
+) -> bool {
     let r = st.audit.append(AuditEvent::Exchange {
         role: "provider".into(),
         message_id: a.message_id.clone(),
@@ -104,7 +121,9 @@ fn log(
     });
     if let Err(e) = r {
         tracing::error!("cannot write audit log: {e}");
+        return false;
     }
+    true
 }
 
 fn rate_limited(st: &AppState, member: &str) -> bool {
