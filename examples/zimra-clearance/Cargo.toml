@@ -3,6 +3,7 @@ name = "zimra-clearance"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Example provider: a mock ZIMRA tax clearance service"
 
 [lints]

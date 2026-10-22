@@ -3,6 +3,7 @@ name = "citizen-portal"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Example: a 'who looked at my data' page backed by a provider's security server"
 
 [lints]

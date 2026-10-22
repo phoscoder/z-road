@@ -3,6 +3,7 @@ name = "security-server"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Z-Road security server"
 
 [lints]

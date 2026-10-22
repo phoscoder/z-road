@@ -3,6 +3,7 @@ name = "signer-service"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "Z-Road signer service: a member holds its own signing key and signs for its hosting node"
 
 [lints]

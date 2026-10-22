@@ -243,4 +243,4 @@ Z-Road is inspired by [X-Road](https://x-road.global/), developed in Estonia and
 
 ## License
 
-To be decided. A permissive open-source licence (Apache-2.0 or MIT) is likely.
+[MIT](LICENSE). Copyright (c) 2026 Victor Phos. Contributions are accepted under the same licence.
