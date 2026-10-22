@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>Z-Road architecture</title>
+  <desc>Two organisations, each with a security server, exchange signed messages over mTLS. A central server and timestamp service provide trust and time.</desc>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1F7A4D"/>
+    </marker>
+    <marker id="arrS" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="959" height="539" rx="18" fill="#FBFCFA" stroke="#DDE5DF"/>
+  <rect x="0.5" y="0.5" width="959" height="6" rx="3" fill="#1F7A4D"/>
+
+  <text x="40" y="44" font-size="22" font-weight="700" fill="#0F172A">Z-Road architecture</text>
+  <text x="40" y="66" font-size="13" fill="#64748B">Data stays with its owner. Only security servers talk to each other.</text>
+
+  <!-- Trust services -->
+  <rect x="300" y="78" width="360" height="92" rx="14" fill="#FFF8DC" stroke="#E6B800" stroke-width="1.2"/>
+  <text x="318" y="98" font-size="10.5" font-weight="700" letter-spacing="1.2" fill="#9A7B00">TRUST SERVICES</text>
+  <rect x="316" y="108" width="160" height="50" rx="10" fill="#FFFFFF" stroke="#E6D28A" filter="url(#sh)"/>
+  <text x="396" y="129" font-size="13.5" font-weight="600" fill="#0F172A" text-anchor="middle">Central Server</text>
+  <text x="396" y="146" font-size="11" fill="#64748B" text-anchor="middle">members · certificates</text>
+  <rect x="484" y="108" width="160" height="50" rx="10" fill="#FFFFFF" stroke="#E6D28A" filter="url(#sh)"/>
+  <text x="564" y="129" font-size="13.5" font-weight="600" fill="#0F172A" text-anchor="middle">Timestamp Service</text>
+  <text x="564" y="146" font-size="11" fill="#64748B" text-anchor="middle">trusted time</text>
+
+
+  <!-- Organisation A -->
+  <rect x="40" y="215" width="330" height="240" rx="16" fill="#F1F7F3" stroke="#C9DDD0" stroke-width="1.2"/>
+  <text x="60" y="243" font-size="10.5" font-weight="700" letter-spacing="1.2" fill="#1F7A4D">ORGANISATION A · CONSUMER</text>
+  <rect x="60" y="290" width="120" height="100" rx="12" fill="#FFFFFF" stroke="#C9D3CC" filter="url(#sh)"/>
+  <text x="120" y="334" font-size="14" font-weight="600" fill="#0F172A" text-anchor="middle">Internal</text>
+  <text x="120" y="352" font-size="14" font-weight="600" fill="#0F172A" text-anchor="middle">system</text>
+  <text x="120" y="374" font-size="10.5" fill="#64748B" text-anchor="middle">ERP · portal · app</text>
+  <rect x="210" y="290" width="120" height="100" rx="12" fill="#1F7A4D" filter="url(#sh)"/>
+  <text x="270" y="334" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Security</text>
+  <text x="270" y="352" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Server A</text>
+  <text x="270" y="374" font-size="10.5" fill="#CFE9DA" text-anchor="middle">sign · log · enforce</text>
+  <path d="M180,340 H208" stroke="#64748B" stroke-width="1.8" marker-end="url(#arrS)" fill="none"/>
+
+  <!-- Organisation B -->
+  <rect x="590" y="215" width="330" height="240" rx="16" fill="#F1F7F3" stroke="#C9DDD0" stroke-width="1.2"/>
+  <text x="610" y="243" font-size="10.5" font-weight="700" letter-spacing="1.2" fill="#1F7A4D">ORGANISATION B · PROVIDER</text>
+  <rect x="630" y="290" width="120" height="100" rx="12" fill="#1F7A4D" filter="url(#sh)"/>
+  <text x="690" y="334" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Security</text>
+  <text x="690" y="352" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Server B</text>
+  <text x="690" y="374" font-size="10.5" fill="#CFE9DA" text-anchor="middle">sign · log · enforce</text>
+  <rect x="780" y="290" width="120" height="100" rx="12" fill="#FFFFFF" stroke="#C9D3CC" filter="url(#sh)"/>
+  <text x="840" y="334" font-size="14" font-weight="600" fill="#0F172A" text-anchor="middle">Internal</text>
+  <text x="840" y="352" font-size="14" font-weight="600" fill="#0F172A" text-anchor="middle">system</text>
+  <text x="840" y="374" font-size="10.5" fill="#64748B" text-anchor="middle">registry · database</text>
+  <path d="M752,340 H778" stroke="#64748B" stroke-width="1.8" marker-end="url(#arrS)" fill="none"/>
+
+  <!-- Trust links -->
+  <path d="M340,170 C340,235 270,225 270,290" fill="none" stroke="#64748B" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#arrS)"/>
+  <path d="M620,170 C620,235 690,225 690,290" fill="none" stroke="#64748B" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#arrS)"/>
+  <text x="480" y="218" font-size="11.5" font-style="italic" fill="#64748B" text-anchor="middle">never sees message data</text>
+
+  <!-- Main channel -->
+  <path d="M332,340 H628" stroke="#1F7A4D" stroke-width="3.2" marker-start="url(#arr)" marker-end="url(#arr)" fill="none"/>
+  <rect x="402" y="311" width="156" height="24" rx="12" fill="#1F7A4D"/>
+  <text x="480" y="327.5" font-size="12.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">mTLS channel</text>
+  <text x="480" y="362" font-size="11.5" fill="#1F7A4D" text-anchor="middle" font-weight="600">signed · timestamped · logged</text>
+
+  <!-- Legend -->
+  <line x1="40" y1="496" x2="76" y2="496" stroke="#1F7A4D" stroke-width="3.2"/>
+  <text x="86" y="500" font-size="12" fill="#475569">Message path</text>
+  <line x1="200" y1="496" x2="236" y2="496" stroke="#64748B" stroke-width="1.6" stroke-dasharray="5 5"/>
+  <text x="246" y="500" font-size="12" fill="#475569">Trust and time services</text>
+  <line x1="410" y1="496" x2="446" y2="496" stroke="#64748B" stroke-width="1.8"/>
+  <text x="456" y="500" font-size="12" fill="#475569">Internal link</text>
+</svg>

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="960" height="480" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>Joining Z-Road</title>
+  <desc>Six steps from applying to the authority to being live on Z-Road.</desc>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="959" height="479" rx="18" fill="#FBFCFA" stroke="#DDE5DF"/>
+  <rect x="0.5" y="0.5" width="959" height="6" rx="3" fill="#1F7A4D"/>
+  <text x="40" y="44" font-size="22" font-weight="700" fill="#0F172A">Joining Z-Road</text>
+  <text x="40" y="66" font-size="13" fill="#64748B">The authority vouches for who you are. Each provider decides who may use its services.</text>
+
+  <!-- Connectors -->
+  <g stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#arr)">
+    <path d="M300,170 H353"/>
+    <path d="M605,170 H658"/>
+    <path d="M785,230 V268 H175 V296"/>
+    <path d="M300,365 H353"/>
+    <path d="M605,365 H658"/>
+  </g>
+
+  <!-- Row 1 -->
+  <g filter="url(#sh)">
+    <rect x="50" y="110" width="250" height="120" rx="14" fill="#FFFFFF" stroke="#C9D3CC"/>
+    <rect x="355" y="110" width="250" height="120" rx="14" fill="#FFFFFF" stroke="#C9D3CC"/>
+    <rect x="660" y="110" width="250" height="120" rx="14" fill="#FFFFFF" stroke="#C9D3CC"/>
+    <rect x="50" y="305" width="250" height="120" rx="14" fill="#FFFFFF" stroke="#C9D3CC"/>
+    <rect x="355" y="305" width="250" height="120" rx="14" fill="#FFFFFF" stroke="#C9D3CC"/>
+    <rect x="660" y="305" width="250" height="120" rx="14" fill="#1F7A4D"/>
+  </g>
+
+  <!-- Number badges -->
+  <g font-size="14" font-weight="700" text-anchor="middle" fill="#FFFFFF">
+    <circle cx="78" cy="138" r="14" fill="#1F7A4D"/><text x="78" y="143">1</text>
+    <circle cx="383" cy="138" r="14" fill="#1F7A4D"/><text x="383" y="143">2</text>
+    <circle cx="688" cy="138" r="14" fill="#1F7A4D"/><text x="688" y="143">3</text>
+    <circle cx="78" cy="333" r="14" fill="#1F7A4D"/><text x="78" y="338">4</text>
+    <circle cx="383" cy="333" r="14" fill="#1F7A4D"/><text x="383" y="338">5</text>
+    <circle cx="688" cy="333" r="14" fill="#F2B705"/><text x="688" y="338" fill="#3B2F00">6</text>
+  </g>
+
+  <!-- Actor chips -->
+  <g font-size="10" font-weight="700" letter-spacing="1" text-anchor="middle">
+    <rect x="188" y="127" width="96" height="20" rx="10" fill="#E6F2EA"/><text x="236" y="141" fill="#1F7A4D">ORGANISATION</text>
+    <rect x="517" y="127" width="72" height="20" rx="10" fill="#FFF3C4"/><text x="553" y="141" fill="#8A6D00">AUTHORITY</text>
+    <rect x="822" y="127" width="72" height="20" rx="10" fill="#FFF3C4"/><text x="858" y="141" fill="#8A6D00">AUTHORITY</text>
+    <rect x="188" y="322" width="96" height="20" rx="10" fill="#E6F2EA"/><text x="236" y="336" fill="#1F7A4D">ORGANISATION</text>
+    <rect x="517" y="322" width="72" height="20" rx="10" fill="#E3EAFB"/><text x="553" y="336" fill="#2B4A9B">PROVIDER</text>
+  </g>
+
+  <!-- Titles -->
+  <g font-size="16" font-weight="700" fill="#0F172A">
+    <text x="70" y="177">Apply</text>
+    <text x="375" y="177">Verify</text>
+    <text x="680" y="177">Register</text>
+    <text x="70" y="372">Install</text>
+    <text x="375" y="372">Approve access</text>
+    <text x="680" y="372" fill="#FFFFFF">Live on Z-Road</text>
+  </g>
+
+  <!-- Descriptions -->
+  <g font-size="12.5" fill="#475569">
+    <text x="70" y="198">Submits an application to the</text>
+    <text x="70" y="215">governing authority.</text>
+    <text x="375" y="198">Identity and legal checks on the</text>
+    <text x="375" y="215">organisation.</text>
+    <text x="680" y="198">Issues certificates and adds the</text>
+    <text x="680" y="215">member to the registry.</text>
+    <text x="70" y="393">Deploys a Security Server on site</text>
+    <text x="70" y="410">or on a shared node.</text>
+    <text x="375" y="393">Providers approve each consumer,</text>
+    <text x="375" y="410">service by service.</text>
+  </g>
+  <g font-size="12.5" fill="#DDF1E5">
+    <text x="680" y="393">Signed, logged exchanges begin.</text>
+    <text x="680" y="410">Every query leaves an audit trail.</text>
+  </g>
+</svg>

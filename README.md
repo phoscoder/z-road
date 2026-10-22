@@ -53,20 +53,9 @@ Z-Road replaces "send me a document" with "ask the source, get a signed answer":
 
 Z-Road has three kinds of components.
 
-```mermaid
-flowchart LR
-    subgraph A["Organisation A (consumer)"]
-        AS["Internal system<br/>(ERP, portal, app)"] --> ASS["Security Server A"]
-    end
-    subgraph B["Organisation B (provider)"]
-        BSS["Security Server B"] --> BS["Internal system<br/>(registry, database)"]
-    end
-    ASS <-->|"mTLS + signed messages"| BSS
-    CS["Central Server<br/>(member registry, trust anchor)"] -.->|"member list, certificates"| ASS
-    CS -.->|"member list, certificates"| BSS
-    TS["Timestamp Service"] -.-> ASS
-    TS -.-> BSS
-```
+<p align="center">
+  <img src="docs/diagrams/architecture.svg" alt="Z-Road architecture: two organisations with security servers exchanging signed messages over mTLS, supported by a central server and timestamp service" width="860">
+</p>
 
 - **Security Server.** Runs at every member. It signs, encrypts, timestamps and logs messages, checks access rights and forwards requests to the internal system. This is the main piece of software and where most security-critical code lives.
 - **Central Server.** Run by the governing authority. It keeps the list of members and their services and acts as the trust anchor. It does **not** see or store exchanged data.
@@ -86,24 +75,9 @@ For example `ZW/GOV/ZIMRA/tax-clearance/verify/v1`.
 
 ## How a request flows
 
-```mermaid
-sequenceDiagram
-    participant C as Consumer system
-    participant CS as Consumer Security Server
-    participant PS as Provider Security Server
-    participant P as Provider system
-
-    C->>CS: Request (service path + payload)
-    CS->>CS: Sign, timestamp, log
-    CS->>PS: mTLS + signed request
-    PS->>PS: Verify member, check access rights, log
-    PS->>P: Forward request
-    P-->>PS: Response
-    PS->>PS: Sign, timestamp, log
-    PS-->>CS: Signed response
-    CS->>CS: Verify signature, log
-    CS-->>C: Response
-```
+<p align="center">
+  <img src="docs/diagrams/request-flow.svg" alt="Sequence diagram of a Z-Road request from consumer system to provider system and back" width="860">
+</p>
 
 Both sides keep their own logs, so either party can later prove what was asked and answered.
 
@@ -145,15 +119,9 @@ Design notes:
 
 ## Joining the network
 
-```mermaid
-flowchart TD
-    A["Organisation applies to the authority"] --> B["Identity and legal checks"]
-    B --> C["Authority issues certificates<br/>and registers the member"]
-    C --> D["Organisation installs a Security Server"]
-    D --> E["Registers its services (as provider)<br/>and/or requests access (as consumer)"]
-    E --> F["Provider approves access per service"]
-    F --> G["Live on Z-Road"]
-```
+<p align="center">
+  <img src="docs/diagrams/onboarding.svg" alt="Six steps to join Z-Road, from application to going live" width="860">
+</p>
 
 The authority vouches for identity. Each provider independently decides who may use each of its services. The Registrar General, for instance, decides whether ZIMRA can query the ID register.
 
