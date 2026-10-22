@@ -256,8 +256,19 @@ previous entry's hash (64 zeros for the first). Editing, removing or reordering
 an entry breaks the chain; a security server refuses to start on a log that does
 not verify.
 
-Outcomes: `ok`, `duplicate`, `denied:<code>`, `error:<code>` (provider and
+Outcomes: `received`, `ok`, `duplicate`, `denied:<code>`, `error:<code>` (provider and
 consumer sides both log; denied requests are logged too).
+
+**Write-ahead on the provider.** Once a request has passed every check, and before
+it is forwarded to the internal system, the provider appends a `received` entry.
+If that entry cannot be written the request is refused with `audit_unavailable`
+(503) and the internal system is never called, so an effect never happens without a
+record. The final entry (`ok`, ...) follows the answer; if *that* cannot be
+written the answer is withheld (`audit_unavailable`) although the request is on
+record, and a retry with the same message id is answered from the stored result
+without calling the internal system again. A consumer whose own log fails after an
+exchange reports an internal error; the provider's log still holds the record.
+`received` entries are not shown to data subjects in the access log.
 
 `subject_ref` is `HMAC-SHA256(subject_key, subject)`; the clear subject is never
 written. The provider can answer "who looked up this subject?" by recomputing

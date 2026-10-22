@@ -395,6 +395,21 @@ async fn process(
         );
     }
 
+    // Write-ahead: record that the request is about to be forwarded. If the log
+    // cannot be written the request is refused *before* it reaches the internal
+    // system, so there is never an effect without a record.
+    if !log(st, a, "received".into(), None, None) {
+        st.dedupe
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&key);
+        return Err(reject(
+            S::SERVICE_UNAVAILABLE,
+            "audit_unavailable",
+            "the provider cannot record this exchange, so it did not process it",
+        ));
+    }
+
     let forwarded = zroad_net::request(
         "POST",
         &upstream,

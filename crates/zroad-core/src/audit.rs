@@ -8,6 +8,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -155,6 +156,9 @@ struct State {
 pub struct AuditLog {
     path: PathBuf,
     state: Mutex<State>,
+    /// Failure injection for tests: negative = off, otherwise the number of
+    /// appends still allowed before every append fails.
+    fail_after: AtomicI64,
 }
 
 impl AuditLog {
@@ -173,6 +177,7 @@ impl AuditLog {
                 seq: report.entries,
                 last_hash: report.head_hash,
             }),
+            fail_after: AtomicI64::new(-1),
         };
         log.append(AuditEvent::Start {
             note: "security server started".into(),
@@ -184,7 +189,28 @@ impl AuditLog {
         &self.path
     }
 
+    /// Test hook: let `n` more appends succeed, then make every append fail,
+    /// as a full disk or a dead volume would. Used to prove that callers fail
+    /// closed.
+    #[doc(hidden)]
+    pub fn inject_write_failure_after(&self, n: u64) {
+        self.fail_after.store(n as i64, Ordering::SeqCst);
+    }
+
+    /// Test hook: stop injecting failures.
+    #[doc(hidden)]
+    pub fn clear_write_failure(&self) {
+        self.fail_after.store(-1, Ordering::SeqCst);
+    }
+
     pub fn append(&self, event: AuditEvent) -> Result<AuditEntry> {
+        match self.fail_after.load(Ordering::SeqCst) {
+            0 => return Err(Error::Audit("injected write failure".into())),
+            n if n > 0 => {
+                self.fail_after.fetch_sub(1, Ordering::SeqCst);
+            }
+            _ => {}
+        }
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let seq = st.seq + 1;
         let ts_ms = now_ms();

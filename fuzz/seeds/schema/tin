@@ -1,0 +1,1 @@
+€{"type":"object","required":["tin"],"properties":{"tin":{"type":"string","pattern":"^[0-9]{10}$"}}}{"tin":"2000123456"}

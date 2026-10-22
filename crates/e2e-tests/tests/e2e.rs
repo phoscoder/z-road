@@ -1403,3 +1403,75 @@ async fn schemas_are_published_and_enforced() {
         "{v}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn provider_fails_closed_when_the_audit_log_cannot_be_written() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let z = net.run(&zimra, true).await;
+    let _b = net.run(&buyer, false).await;
+    let raw = RawClient::new(&buyer, &zimra);
+    let body = br#"{"tin":"2000123456"}"#;
+    let audit_log = z.state.audit.clone();
+    let log_text = || std::fs::read_to_string(zimra.dir.join("audit/log.jsonl")).unwrap();
+
+    assert_eq!(
+        raw.send(&raw.envelope(&random_id(), body), body, None)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), 1);
+
+    // 1. The log is dead before the request arrives: it is refused up front and
+    //    the internal system is never called, so there is no effect without a record.
+    audit_log.inject_write_failure_after(0);
+    let id = random_id();
+    let (s, v) = raw.send(&raw.envelope(&id, body), body, None).await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (503, "audit_unavailable")
+    );
+    assert_eq!(
+        net.upstream_calls.load(Ordering::SeqCst),
+        1,
+        "the internal system was not called"
+    );
+    // The consumer's side sees a retryable Z-Road error.
+    let (s, v, h) = clearance(&buyer, "ZW/COM/12345678/ap", "2000123456").await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (503, "audit_unavailable"),
+        "{v}"
+    );
+    assert!(h.get("retry-after").is_some(), "marked retryable");
+
+    // 2. Recovery: the same message id can be retried and is processed once.
+    audit_log.clear_write_failure();
+    assert_eq!(raw.send(&raw.envelope(&id, body), body, None).await.0, 200);
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), 2);
+
+    // 3. The log dies after the write-ahead record but before the outcome: the
+    //    request was forwarded, so it is on record, but the answer is withheld.
+    audit_log.inject_write_failure_after(1);
+    let id2 = random_id();
+    let (s, v) = raw.send(&raw.envelope(&id2, body), body, None).await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (503, "audit_unavailable")
+    );
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), 3);
+    audit_log.clear_write_failure();
+    let text = log_text();
+    assert!(
+        text.contains(&id2) && text.contains("\"outcome\":\"received\""),
+        "write-ahead record is on disk"
+    );
+    // 4. A retry after recovery gets the answer without calling the internal system again.
+    assert_eq!(raw.send(&raw.envelope(&id2, body), body, None).await.0, 200);
+    assert_eq!(net.upstream_calls.load(Ordering::SeqCst), 3);
+
+    // The chain is intact throughout, and the citizen view does not double count.
+    audit::verify_file(&zimra.dir.join("audit/log.jsonl")).unwrap();
+}

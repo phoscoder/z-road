@@ -276,7 +276,7 @@ async fn access_log(
                 message_id,
                 outcome,
                 ..
-            } if role == "provider" && r == want => Some(AccessRecord {
+            } if role == "provider" && r == want && outcome != "received" => Some(AccessRecord {
                 time_ms: e.ts_ms,
                 accessed_by: peer,
                 client,

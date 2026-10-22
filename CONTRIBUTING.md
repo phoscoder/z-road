@@ -18,4 +18,5 @@ Guidelines:
 * Keep the protocol described in [docs/protocol.md](docs/protocol.md) in step with the code.
 * Add a test for every rejected-request path you add or change (see `crates/e2e-tests`).
 * `unsafe` is forbidden in this workspace.
+* Code that parses untrusted input should get a fuzz target in `fuzz/` (see `fuzz/README.md`).
 * Prefer small dependencies from well-known maintainers and run `cargo audit`.
