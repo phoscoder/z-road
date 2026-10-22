@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ids, wire_messages, audit_log, certificates, schema]
+        target: [ids, wire_messages, audit_log, certificates, schema, citizen]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

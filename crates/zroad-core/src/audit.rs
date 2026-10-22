@@ -43,6 +43,14 @@ pub enum AuditEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         via: Option<String>,
     },
+    /// An administrative action or a privileged lookup, with who did it.
+    Admin {
+        operator: String,
+        role: String,
+        action: String,
+        /// Never contains the data subject in clear: lookups carry a keyed hash.
+        detail: Option<String>,
+    },
     /// Written by a member's own signer service: one entry per signature made on
     /// the member's behalf, so a member can audit the node that hosts it.
     Signed {

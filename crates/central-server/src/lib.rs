@@ -12,6 +12,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
+use zroad_core::audit::{AuditEvent, AuditLog};
+use zroad_core::auth::{self, Authenticator, OperatorEntry, Principal, Role};
 use zroad_core::crypto::{ct_eq, sha256_hex};
 use zroad_core::directory::{Catalogue, CatalogueEntry, Directory, MemberRecord, MemberStatus};
 use zroad_core::id::MemberId;
@@ -39,8 +41,61 @@ struct Stored {
 struct App {
     ca: CertAuthority,
     admin_token: String,
+    dir: PathBuf,
+    audit: AuditLog,
     state: Mutex<Stored>,
     state_path: PathBuf,
+}
+
+const OPERATORS_FILE: &str = "operators.json";
+
+fn load_operators(dir: &Path) -> Result<Vec<OperatorEntry>> {
+    match std::fs::read(dir.join(OPERATORS_FILE)) {
+        Ok(b) => Ok(serde_json::from_slice(&b)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn save_operators(dir: &Path, ops: &[OperatorEntry]) -> Result<()> {
+    let tmp = dir.join("operators.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(ops)?)?;
+    std::fs::rename(tmp, dir.join(OPERATORS_FILE))?;
+    Ok(())
+}
+
+/// Add a named operator and return their token. It is shown once; only its hash
+/// is kept. Takes effect immediately on a running server (the file is read on
+/// every administrative request).
+pub fn add_operator(dir: &Path, name: &str, role: Role) -> Result<String> {
+    if role == Role::Portal {
+        bail!("the portal role does not apply to the central server");
+    }
+    let mut ops = load_operators(dir)?;
+    let token = auth::new_token();
+    ops.push(OperatorEntry {
+        name: name.into(),
+        role,
+        token_sha256: auth::hash_token(&token),
+    });
+    // validates names, hashes and uniqueness
+    Authenticator::new(ops.clone()).map_err(|e| anyhow!("{e}"))?;
+    save_operators(dir, &ops)?;
+    Ok(token)
+}
+
+pub fn remove_operator(dir: &Path, name: &str) -> Result<()> {
+    let mut ops = load_operators(dir)?;
+    let before = ops.len();
+    ops.retain(|o| o.name != name);
+    if ops.len() == before {
+        bail!("no operator named `{name}`");
+    }
+    save_operators(dir, &ops)
+}
+
+pub fn list_operators(dir: &Path) -> Result<Vec<OperatorEntry>> {
+    load_operators(dir)
 }
 
 /// Create a new central server data directory: CA, TLS identity, admin token.
@@ -81,8 +136,12 @@ pub async fn spawn(dir: &Path, addr: &str) -> Result<ServerHandle> {
     let ca_pem = read("ca.pem")?;
     let ca = CertAuthority::load(&ca_pem, &read("ca.key")?).map_err(|e| anyhow!("{e}"))?;
     let state: Stored = serde_json::from_str(&read("state.json")?)?;
+    let audit = AuditLog::open(&dir.join("audit").join("log.jsonl"))
+        .map_err(|e| anyhow!("central audit log is corrupt, refusing to start: {e}"))?;
     let app = Arc::new(App {
         ca,
+        dir: dir.to_path_buf(),
+        audit,
         admin_token: read("admin_token")?.trim().to_string(),
         state: Mutex::new(state),
         state_path: dir.join("state.json"),
@@ -136,21 +195,48 @@ fn internal(e: impl std::fmt::Display) -> ApiError {
     )
 }
 
-fn require_admin(app: &App, headers: &HeaderMap) -> std::result::Result<(), ApiError> {
+/// Authenticate an operator, check their role and record the action before it
+/// happens. `admin_token` (the original credential) still works, as `admin`.
+async fn authorize(
+    app: &App,
+    headers: &HeaderMap,
+    needed: Role,
+    action: &str,
+    detail: Option<String>,
+) -> std::result::Result<Principal, ApiError> {
     let given = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    if ct_eq(given.as_bytes(), app.admin_token.as_bytes()) {
-        Ok(())
-    } else {
-        Err(ApiError(
+    let ops = load_operators(&app.dir).map_err(internal)?;
+    let auth = Authenticator::new(ops)
+        .map_err(internal)?
+        .with_legacy_admin(Some(app.admin_token.as_str()));
+    let Some(who) = auth.authenticate(given) else {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        return Err(ApiError(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
-            "admin token required".into(),
-        ))
+            "a valid operator token is required".into(),
+        ));
+    };
+    if !who.role.allows(needed) {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "this operator's role does not allow that".into(),
+        ));
     }
+    app.audit
+        .append(AuditEvent::Admin {
+            operator: who.name.clone(),
+            role: who.role.as_str().into(),
+            action: action.into(),
+            detail,
+        })
+        .map_err(internal)?;
+    Ok(who)
 }
 
 fn endpoint_host(endpoint: &str) -> std::result::Result<String, ApiError> {
@@ -183,7 +269,14 @@ async fn add_member(
     headers: HeaderMap,
     Json(req): Json<AddMemberRequest>,
 ) -> ApiResult<AddMemberResponse> {
-    require_admin(&app, &headers)?;
+    authorize(
+        &app,
+        &headers,
+        Role::Operator,
+        "member_add",
+        Some(format!("member={}", req.id)),
+    )
+    .await?;
     let token = random_secret();
     let mut st = app.state.lock().unwrap_or_else(|p| p.into_inner());
 
@@ -279,6 +372,14 @@ async fn enroll(
         return Err(denied());
     }
     let host = endpoint_host(&st.members[idx].endpoint)?;
+    app.audit
+        .append(AuditEvent::Admin {
+            operator: "enrollment-token".into(),
+            role: "token".into(),
+            action: "member_enroll".into(),
+            detail: Some(format!("member={}", req.member_id)),
+        })
+        .map_err(internal)?;
     let cert_pem = app
         .ca
         .sign_csr(&req.csr_pem, &req.member_id, &[host], CERT_VALID_DAYS)
@@ -299,7 +400,14 @@ async fn revoke(
     headers: HeaderMap,
     Json(req): Json<RevokeRequest>,
 ) -> ApiResult<serde_json::Value> {
-    require_admin(&app, &headers)?;
+    authorize(
+        &app,
+        &headers,
+        Role::Admin,
+        "member_revoke",
+        Some(format!("member={}", req.member_id)),
+    )
+    .await?;
     let mut st = app.state.lock().unwrap_or_else(|p| p.into_inner());
     let m = st
         .members

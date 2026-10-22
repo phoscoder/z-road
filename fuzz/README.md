@@ -17,6 +17,7 @@ cargo +nightly fuzz run schema seeds/schema -- -max_total_time=120
 | `wire_messages` | every JSON message a peer can send, signed-message opening, proof and timestamp verification | never panics; a proof or timestamp never verifies against an arbitrary key |
 | `audit_log` | reading and verifying a hostile audit log file | never panics; `AuditLog::open` refuses exactly the logs that do not verify |
 | `certificates` | certificate parsing, PEM handling, CSR signing | never panics; any issued certificate names the member it was issued for |
+| `citizen` | citizen identity assertion verification | never panics; nothing not signed by a trusted key is ever accepted |
 | `schema` | compiling schemas published by other members, checking instances | never panics; no pathological hang (libFuzzer's timeout would flag it) |
 
 A crash is written to `fuzz/artifacts/<target>/`. Reproduce it with

@@ -96,6 +96,39 @@ enum Cmd {
         #[arg(long = "san", required = true)]
         sans: Vec<String>,
     },
+    /// Create a token for a named operator. Prints the token (shown once) on
+    /// stdout and the config entry to add on stderr.
+    OperatorToken {
+        #[arg(long)]
+        name: String,
+        /// auditor, operator, admin or portal.
+        #[arg(long)]
+        role: zroad_core::auth::Role,
+    },
+    /// Generate an Ed25519 key for a system that authenticates citizens and
+    /// issues identity assertions. Writes the private key; prints the public key
+    /// for `citizen_assertion_keys`.
+    CitizenKey {
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        name: String,
+    },
+    /// Issue a citizen identity assertion (a short-lived signed statement that a
+    /// logged-in person controls a subject identifier). In production this is
+    /// done by the system that logged the person in, not by this tool.
+    CitizenAssertion {
+        #[arg(long)]
+        key: PathBuf,
+        /// The identifier the person controls, as used in Z-Road-Subject.
+        #[arg(long)]
+        subject: String,
+        /// The provider member the assertion is for, e.g. ZW/GOV/ZIMRA.
+        #[arg(long)]
+        aud: MemberId,
+        #[arg(long, default_value_t = 300)]
+        ttl_secs: u64,
+    },
     /// Verify an audit log: hash chain and, with a directory, timestamp anchors.
     AuditVerify {
         #[arg(long)]
@@ -234,6 +267,55 @@ async fn main() -> Result<()> {
             let id = zroad_net::central_client::renew_in_dir(&central, &dir, &sans).await?;
             println!("renewed {id}; restart its security server to use the new certificate");
         }
+        Cmd::OperatorToken { name, role } => {
+            let token = zroad_core::auth::new_token();
+            println!("{token}");
+            eprintln!("# give the token above to {name} (shown once). Add this to the config:");
+            eprintln!("[[operators]]");
+            eprintln!("name = \"{name}\"");
+            eprintln!("role = \"{}\"", role.as_str());
+            eprintln!(
+                "token_sha256 = \"{}\"",
+                zroad_core::auth::hash_token(&token)
+            );
+        }
+        Cmd::CitizenKey { out, name } => {
+            let kp =
+                rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).map_err(|e| anyhow!("{e}"))?;
+            let pem = kp.serialize_pem();
+            let signer = zroad_core::crypto::SoftwareSigner::from_pkcs8_pem(&pem)
+                .map_err(|e| anyhow!("{e}"))?;
+            zroad_net::central_client::write_private(&out, &pem)?;
+            let public =
+                zroad_core::msg::b64_encode(&zroad_core::crypto::Signer::public_key(&signer));
+            println!("private key written to {}", out.display());
+            println!("[[citizen_assertion_keys]]");
+            println!("name = \"{name}\"");
+            println!("public_key_b64 = \"{public}\"");
+        }
+        Cmd::CitizenAssertion {
+            key,
+            subject,
+            aud,
+            ttl_secs,
+        } => {
+            let signer =
+                zroad_core::crypto::SoftwareSigner::from_pkcs8_pem(&std::fs::read_to_string(&key)?)
+                    .map_err(|e| anyhow!("{e}"))?;
+            let now = zroad_core::now_ms();
+            let a = zroad_core::citizen::Assertion {
+                v: 1,
+                sub: subject,
+                aud,
+                iat_ms: now,
+                exp_ms: now + ttl_secs.min(600) * 1000,
+                jti: zroad_core::random_id(),
+            };
+            println!(
+                "{}",
+                zroad_core::citizen::issue(&a, &signer).map_err(|e| anyhow!("{e}"))?
+            );
+        }
         Cmd::AuditVerify { log, directory } => {
             let report = audit::verify_file(&log).map_err(|e| anyhow!("{e}"))?;
             println!(
@@ -264,8 +346,12 @@ async fn main() -> Result<()> {
                 .iter()
                 .filter(|e| matches!(e.event, AuditEvent::Exchange { .. }))
                 .count();
+            let admin = entries
+                .iter()
+                .filter(|e| matches!(e.event, AuditEvent::Admin { .. }))
+                .count();
             println!(
-                "{exchanges} exchange record(s), {} anchor(s)",
+                "{exchanges} exchange record(s), {admin} administrative action(s), {} anchor(s)",
                 report.anchors.len()
             );
         }

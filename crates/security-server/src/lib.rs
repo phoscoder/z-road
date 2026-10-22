@@ -193,6 +193,8 @@ async fn build_member(
     shared_cert: &mut Option<Arc<tls::ReloadableCert>>,
     node_identity: Option<&NodeIdentity>,
 ) -> Result<Arc<AppState>> {
+    cfg.validate()
+        .with_context(|| format!("configuration of {}", cfg.member_id))?;
     let dir = cfg.data_dir.clone();
     std::fs::create_dir_all(&dir)?;
     let read = |f: &str| {
@@ -297,8 +299,12 @@ async fn build_member(
     std::fs::create_dir_all(&proofs_dir)?;
     let dedupe = seed_dedupe(&audit_path, &cfg);
     let schemas = load_schemas(&cfg)?;
+    let auth = cfg.authenticator()?;
+    let citizen_issuers = cfg.citizen_issuers()?;
     Ok(Arc::new(AppState {
         schemas,
+        auth,
+        citizen_issuers,
         ca_pem: ca.clone(),
         identity: AppState::new_identity_lock(state::Identity {
             signer,

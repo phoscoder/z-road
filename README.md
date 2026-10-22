@@ -201,7 +201,8 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 | Resilience | Durable async outbox with backoff; cached directory keeps working if the central server is down |
 | Accountability | Hash-chained audit log on both sides, refuses to start on a broken chain, periodic trusted-timestamp anchors |
 | Proofs | A signed proof header on every answer, verifiable offline with `zroad-cli proof-verify` |
-| Transparency | Provider-side "who looked up this subject" query, without storing the subject in clear |
+| Transparency | Provider-side "who looked up this subject" query, without storing the subject in clear; a citizen endpoint that answers only for the person a login system has vouched for (signed identity assertions) |
+| Access control | Named operators with roles (`auditor`, `operator`, `admin`, `portal`) and per-person tokens stored as hashes; every privileged action is recorded in the tamper-evident log before it happens ([details](docs/access-control.md)) |
 
 ## Roadmap
 
@@ -210,7 +211,7 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [x] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
 - [x] **Phase 3: Resilience.** Durable outbox, retries with backoff, idempotent redelivery, cached directory.
 - [x] **Phase 4: Transparency.** Access log by data subject and a demo citizen page (`examples/citizen-portal`). A real citizen-facing service still needs identity proofing of the citizen.
-- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, coverage-guided fuzzing of the parsers (`fuzz/`), fail-closed audit logging with a write-ahead record, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, longer fuzz campaigns, and an independent security review.
+- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, coverage-guided fuzzing of the parsers (`fuzz/`), fail-closed audit logging with a write-ahead record, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: a real citizen login integration (the assertion mechanism is built; the login itself is per provider), HSM-backed keys, offline root CA, longer fuzz campaigns, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
 Not started: ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
@@ -220,6 +221,7 @@ Not started: ready-made plug-ins for specific ERP products (the HTTP API, an Ope
 - [Protocol specification](docs/protocol.md)
 - [Threat model](docs/threat-model.md)
 - [Running Z-Road](docs/deployment.md)
+- [Access control: operators, roles and citizen login](docs/access-control.md)
 - [Integrating an application](docs/integration.md) and the [internal API (OpenAPI)](docs/openapi-internal.yaml)
 - [Legal and regulatory considerations](docs/legal-considerations.md)
 - [Pilot plan](docs/pilot-plan.md)
