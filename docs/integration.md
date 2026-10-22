@@ -69,7 +69,7 @@ let (request, response) = reply.verify(&directory)?;   // live replies only
 
 The same call in a few lines. Treat a `Z-Road-Error` header as the error signal.
 
-**Python**: there is a tested client library in its own repository (`zroad-client-python`: `call`, `submit`/`wait`, typed errors). The bare-HTTP version:
+**Python**: there is a tested client library in its own repository ([phoscoder/z-road-python](https://github.com/phoscoder/z-road-python): `call`, `submit`/`wait`, typed errors). The bare-HTTP version:
 
 ```python
 import requests
