@@ -9,7 +9,12 @@ description = "End-to-end tests that run a whole Z-Road network in process"
 [lints]
 workspace = true
 
+[dependencies]
+
 [dev-dependencies]
+http.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 bytes.workspace = true

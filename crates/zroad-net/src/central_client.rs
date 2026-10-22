@@ -82,14 +82,26 @@ impl CentralClient {
             name: name.into(),
             endpoint: endpoint.into(),
         };
-        self.call("POST", "/v1/admin/members", Some(admin_token), Self::json(&body))
-            .await
+        self.call(
+            "POST",
+            "/v1/admin/members",
+            Some(admin_token),
+            Self::json(&body),
+        )
+        .await
     }
 
     pub async fn revoke(&self, admin_token: &str, id: &MemberId) -> Result<()> {
-        let body = RevokeRequest { member_id: id.clone() };
+        let body = RevokeRequest {
+            member_id: id.clone(),
+        };
         let _: serde_json::Value = self
-            .call("POST", "/v1/admin/revoke", Some(admin_token), Self::json(&body))
+            .call(
+                "POST",
+                "/v1/admin/revoke",
+                Some(admin_token),
+                Self::json(&body),
+            )
             .await?;
         Ok(())
     }

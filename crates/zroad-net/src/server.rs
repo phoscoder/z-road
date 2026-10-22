@@ -79,7 +79,8 @@ pub async fn spawn(
                     .header_read_timeout(HEADER_TIMEOUT);
                 match acceptor {
                     Some(acceptor) => {
-                        let hs = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(tcp)).await;
+                        let hs =
+                            tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(tcp)).await;
                         let stream = match hs {
                             Ok(Ok(s)) => s,
                             Ok(Err(e)) => {

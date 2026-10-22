@@ -1,0 +1,393 @@
+//! The provider side: authenticate the peer, verify and authorise the signed
+//! request, forward it to the internal system and sign the answer.
+
+use std::sync::Arc;
+
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
+use bytes::Bytes;
+use zroad_core::audit::AuditEvent;
+use zroad_core::crypto::{hmac_sha256_hex, sha256_hex};
+use zroad_core::msg::*;
+use zroad_core::{now_ms, pki};
+use zroad_net::api::ErrorBody;
+use zroad_net::server::PeerCert;
+
+use crate::state::{AppState, DedupeEntry, DedupeState};
+
+pub struct Reject {
+    status: StatusCode,
+    code: &'static str,
+    message: String,
+}
+
+fn reject(status: StatusCode, code: &'static str, message: impl Into<String>) -> Reject {
+    Reject {
+        status,
+        code,
+        message: message.into(),
+    }
+}
+
+#[derive(Default)]
+struct Attempt {
+    message_id: String,
+    peer: String,
+    client: String,
+    service: String,
+    request_sha: String,
+    subject_ref: Option<String>,
+}
+
+const DEDUPE_TTL_MS: u64 = 15 * 60 * 1000;
+const DEDUPE_MAX: usize = 100_000;
+
+pub async fn exchange(
+    State(st): State<Arc<AppState>>,
+    Extension(peer): Extension<Option<PeerCert>>,
+    body: Bytes,
+) -> Response {
+    let mut a = Attempt::default();
+    match process(&st, peer, &body, &mut a).await {
+        Ok((resp, status, response_sha, duplicate)) => {
+            log(
+                &st,
+                &a,
+                if duplicate { "duplicate" } else { "ok" }.into(),
+                Some(status),
+                Some(response_sha),
+            );
+            Json(resp).into_response()
+        }
+        Err(r) => {
+            let outcome = if r.status.is_server_error() {
+                format!("error:{}", r.code)
+            } else {
+                format!("denied:{}", r.code)
+            };
+            log(&st, &a, outcome, None, None);
+            let mut resp = (
+                r.status,
+                Json(ErrorBody {
+                    error: r.code.into(),
+                    message: r.message,
+                }),
+            )
+                .into_response();
+            resp.headers_mut()
+                .insert("z-road-error", r.code.parse().expect("static header value"));
+            resp
+        }
+    }
+}
+
+fn log(
+    st: &AppState,
+    a: &Attempt,
+    outcome: String,
+    status: Option<u16>,
+    response_sha: Option<String>,
+) {
+    let r = st.audit.append(AuditEvent::Exchange {
+        role: "provider".into(),
+        message_id: a.message_id.clone(),
+        peer: a.peer.clone(),
+        client: a.client.clone(),
+        service: a.service.clone(),
+        request_sha256: a.request_sha.clone(),
+        response_sha256: response_sha,
+        status,
+        outcome,
+        subject_ref: a.subject_ref.clone(),
+    });
+    if let Err(e) = r {
+        tracing::error!("cannot write audit log: {e}");
+    }
+}
+
+fn rate_limited(st: &AppState, member: &str) -> bool {
+    let sec = now_ms() / 1000;
+    let mut m = st.rate.lock().unwrap_or_else(|p| p.into_inner());
+    if m.len() > 10_000 {
+        m.retain(|_, (s, _)| *s == sec);
+    }
+    let e = m.entry(member.to_string()).or_insert((sec, 0));
+    if e.0 != sec {
+        *e = (sec, 0);
+    }
+    e.1 += 1;
+    e.1 > st.cfg.rate_limit_per_sec
+}
+
+/// Is `info` an active member whose registered certificate is the one presented?
+fn is_active_peer(st: &AppState, info: &pki::CertInfo) -> bool {
+    st.dir
+        .snapshot()
+        .get_active(&info.member)
+        .and_then(|m| m.cert_pem.as_deref())
+        .and_then(|pem| pki::inspect_cert_pem(pem).ok())
+        .map(|c| c.fingerprint == info.fingerprint)
+        .unwrap_or(false)
+}
+
+async fn process(
+    st: &AppState,
+    peer: Option<PeerCert>,
+    raw: &[u8],
+    a: &mut Attempt,
+) -> Result<(ExchangeResponse, u16, String, bool), Reject> {
+    use StatusCode as S;
+    let peer = peer.ok_or_else(|| {
+        reject(
+            S::UNAUTHORIZED,
+            "no_client_certificate",
+            "client certificate required",
+        )
+    })?;
+    let info = pki::inspect_cert_der(&peer.0)
+        .map_err(|e| reject(S::UNAUTHORIZED, "bad_client_certificate", e.to_string()))?;
+    a.peer = info.member.to_string();
+
+    if rate_limited(st, &a.peer) {
+        return Err(reject(
+            S::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many requests",
+        ));
+    }
+    if !is_active_peer(st, &info) {
+        st.dir
+            .refresh_throttled(std::time::Duration::from_secs(2))
+            .await;
+        if !is_active_peer(st, &info) {
+            return Err(reject(
+                S::FORBIDDEN,
+                "member_not_active",
+                "member is unknown, revoked or presented an outdated certificate",
+            ));
+        }
+    }
+
+    let wire: ExchangeRequest = serde_json::from_slice(raw).map_err(|e| {
+        reject(
+            S::BAD_REQUEST,
+            "malformed",
+            format!("unreadable request: {e}"),
+        )
+    })?;
+    a.request_sha = wire
+        .request
+        .payload_sha256()
+        .map_err(|e| reject(S::BAD_REQUEST, "malformed", e.to_string()))?;
+    let env: RequestEnvelope = wire
+        .request
+        .open(REQUEST_DOMAIN, &info.public_key)
+        .map_err(|e| reject(S::BAD_REQUEST, "bad_signature", e.to_string()))?;
+    a.message_id = env.message_id.clone();
+    a.client = env.client.to_string();
+    a.service = env.service.to_string();
+    a.subject_ref = env
+        .subject
+        .as_deref()
+        .map(|s| hmac_sha256_hex(&st.subject_key, s.as_bytes()));
+
+    if env.version != PROTOCOL_VERSION {
+        return Err(reject(
+            S::BAD_REQUEST,
+            "unsupported_version",
+            "unsupported protocol version",
+        ));
+    }
+    if env.message_id.is_empty() || env.message_id.len() > 64 {
+        return Err(reject(S::BAD_REQUEST, "malformed", "bad message id"));
+    }
+    if env.client.member != info.member {
+        return Err(reject(
+            S::FORBIDDEN,
+            "client_mismatch",
+            "client does not belong to the authenticated member",
+        ));
+    }
+    if env.service.member != st.cfg.member_id {
+        return Err(reject(
+            S::BAD_REQUEST,
+            "wrong_provider",
+            "this security server does not serve that member",
+        ));
+    }
+    let skew = now_ms().abs_diff(env.issued_at_ms);
+    if skew > MAX_CLOCK_SKEW_MS {
+        return Err(reject(
+            S::BAD_REQUEST,
+            "stale_request",
+            "request timestamp is outside the allowed clock skew",
+        ));
+    }
+    let body = b64_decode(&wire.body_b64)
+        .map_err(|e| reject(S::BAD_REQUEST, "malformed", e.to_string()))?;
+    if body.len() > st.cfg.max_body_bytes {
+        return Err(reject(
+            S::PAYLOAD_TOO_LARGE,
+            "too_large",
+            "request body too large",
+        ));
+    }
+    if sha256_hex(&body) != env.body_sha256 {
+        return Err(reject(
+            S::BAD_REQUEST,
+            "body_mismatch",
+            "body does not match the signed hash",
+        ));
+    }
+
+    let local = env.service.local_key();
+    let upstream = st
+        .cfg
+        .upstream_for(&local)
+        .ok_or_else(|| reject(S::NOT_FOUND, "unknown_service", "no such service"))?
+        .to_string();
+    if !st.cfg.is_allowed(&local, &env.client) {
+        return Err(reject(
+            S::FORBIDDEN,
+            "access_denied",
+            "client is not allowed to use this service",
+        ));
+    }
+
+    // Duplicate and replay handling.
+    let key = format!("{}|{}", a.peer, env.message_id);
+    let fingerprint = (a.client.clone(), a.service.clone(), env.body_sha256.clone());
+    let now = now_ms();
+    {
+        let mut map = st.dedupe.lock().unwrap_or_else(|p| p.into_inner());
+        if map.len() >= DEDUPE_MAX {
+            map.retain(|_, e| e.expires_ms > now);
+            if map.len() >= DEDUPE_MAX {
+                return Err(reject(
+                    S::SERVICE_UNAVAILABLE,
+                    "busy",
+                    "too many outstanding messages",
+                ));
+            }
+        }
+        if let Some(e) = map.get(&key).filter(|e| e.expires_ms > now) {
+            if e.fingerprint != fingerprint {
+                return Err(reject(
+                    S::CONFLICT,
+                    "replay",
+                    "message id reused with different content",
+                ));
+            }
+            match &e.state {
+                DedupeState::InFlight => {
+                    return Err(reject(
+                        S::CONFLICT,
+                        "in_flight",
+                        "message is already being processed",
+                    ));
+                }
+                DedupeState::Done {
+                    status,
+                    body,
+                    content_type,
+                } => {
+                    let (resp, sha) =
+                        sign_response(st, &env, &a.request_sha, *status, body, content_type)?;
+                    return Ok((resp, *status, sha, true));
+                }
+            }
+        }
+        map.insert(
+            key.clone(),
+            DedupeEntry {
+                expires_ms: now + DEDUPE_TTL_MS,
+                fingerprint,
+                state: DedupeState::InFlight,
+            },
+        );
+    }
+
+    let forwarded = zroad_net::request(
+        "POST",
+        &upstream,
+        &[
+            ("content-type", env.content_type.as_str()),
+            ("x-zroad-client", &a.client),
+            ("x-zroad-member", &a.peer),
+            ("x-zroad-message-id", &env.message_id),
+        ],
+        Bytes::from(body),
+        None,
+        std::time::Duration::from_secs(st.cfg.upstream_timeout_secs),
+    )
+    .await;
+    let up = match forwarded {
+        Ok(r) => r,
+        Err(e) => {
+            st.dedupe
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&key);
+            tracing::warn!("upstream {upstream} failed: {e}");
+            return Err(reject(
+                S::BAD_GATEWAY,
+                "upstream_unavailable",
+                "the provider's internal system did not answer",
+            ));
+        }
+    };
+    let content_type = up
+        .headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json")
+        .to_string();
+    let (resp, sha) = sign_response(st, &env, &a.request_sha, up.status, &up.body, &content_type)?;
+    {
+        let mut map = st.dedupe.lock().unwrap_or_else(|p| p.into_inner());
+        if up.status < 500 {
+            if let Some(e) = map.get_mut(&key) {
+                e.state = DedupeState::Done {
+                    status: up.status,
+                    body: up.body.clone(),
+                    content_type,
+                };
+            }
+        } else {
+            map.remove(&key);
+        }
+    }
+    Ok((resp, up.status, sha, false))
+}
+
+fn sign_response(
+    st: &AppState,
+    env: &RequestEnvelope,
+    request_sha: &str,
+    status: u16,
+    body: &[u8],
+    content_type: &str,
+) -> Result<(ExchangeResponse, String), Reject> {
+    let body_sha = sha256_hex(body);
+    let envelope = ResponseEnvelope {
+        version: PROTOCOL_VERSION,
+        request_id: env.message_id.clone(),
+        request_sha256: request_sha.to_string(),
+        provider: st.cfg.member_id.clone(),
+        status,
+        issued_at_ms: now_ms(),
+        body_sha256: body_sha.clone(),
+        content_type: content_type.to_string(),
+    };
+    let signed = SignedMessage::sign(RESPONSE_DOMAIN, &envelope, st.signer.as_ref())
+        .map_err(|e| reject(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
+    Ok((
+        ExchangeResponse {
+            response: signed,
+            body_b64: b64_encode(body),
+        },
+        body_sha,
+    ))
+}

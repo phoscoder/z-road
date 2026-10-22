@@ -51,13 +51,22 @@ pub async fn request(
     tls: Option<&Arc<ClientConfig>>,
     timeout: Duration,
 ) -> Result<Response, NetError> {
-    let uri: http::Uri = url.parse().map_err(|e| NetError::Url(format!("{url}: {e}")))?;
+    let uri: http::Uri = url
+        .parse()
+        .map_err(|e| NetError::Url(format!("{url}: {e}")))?;
     let https = match uri.scheme_str() {
         Some("https") => true,
         Some("http") => false,
-        _ => return Err(NetError::Url(format!("{url}: scheme must be http or https"))),
+        _ => {
+            return Err(NetError::Url(format!(
+                "{url}: scheme must be http or https"
+            )))
+        }
     };
-    let host = uri.host().ok_or_else(|| NetError::Url(format!("{url}: no host")))?.to_string();
+    let host = uri
+        .host()
+        .ok_or_else(|| NetError::Url(format!("{url}: no host")))?
+        .to_string();
     let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
     let path = uri
         .path_and_query()

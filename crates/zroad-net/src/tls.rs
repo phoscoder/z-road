@@ -36,7 +36,9 @@ pub fn client_config(ca_pem: &str, identity: Option<(&str, &str)>) -> Result<Arc
         .with_safe_default_protocol_versions()?
         .with_root_certificates(roots(ca_pem)?);
     let cfg = match identity {
-        Some((cert_pem, key_pem)) => builder.with_client_auth_cert(certs(cert_pem)?, key(key_pem)?)?,
+        Some((cert_pem, key_pem)) => {
+            builder.with_client_auth_cert(certs(cert_pem)?, key(key_pem)?)?
+        }
         None => builder.with_no_client_auth(),
     };
     Ok(Arc::new(cfg))
@@ -51,8 +53,8 @@ pub fn server_config(
     require_client_auth: bool,
 ) -> Result<Arc<ServerConfig>> {
     let p = Arc::new(provider::default_provider());
-    let builder = ServerConfig::builder_with_provider(p.clone())
-        .with_safe_default_protocol_versions()?;
+    let builder =
+        ServerConfig::builder_with_provider(p.clone()).with_safe_default_protocol_versions()?;
     let builder = if require_client_auth {
         let verifier =
             WebPkiClientVerifier::builder_with_provider(Arc::new(roots(ca_pem)?), p).build()?;
@@ -60,5 +62,7 @@ pub fn server_config(
     } else {
         builder.with_no_client_auth()
     };
-    Ok(Arc::new(builder.with_single_cert(certs(cert_pem)?, key(key_pem)?)?))
+    Ok(Arc::new(
+        builder.with_single_cert(certs(cert_pem)?, key(key_pem)?)?,
+    ))
 }

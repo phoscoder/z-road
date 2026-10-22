@@ -3,11 +3,11 @@
 //! Every member's identity is an Ed25519 key. The same key signs TLS handshakes
 //! and Z-Road messages, and the certificate's common name is the member id.
 
+use ::time::{Duration, OffsetDateTime};
 use rcgen::{
     BasicConstraints, CertificateParams, CertificateSigningRequestParams, DistinguishedName,
     DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SanType, PKCS_ED25519,
 };
-use ::time::{Duration, OffsetDateTime};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::crypto::sha256_hex;
@@ -187,7 +187,9 @@ mod tests {
         let member: MemberId = "ZW/GOV/ZIMRA".parse().unwrap();
         let id = generate_identity(&member, &["127.0.0.1".into(), "zimra.test".into()]).unwrap();
         let allowed = vec!["127.0.0.1".to_string(), "zimra.test".to_string()];
-        let pem = reloaded.sign_csr(&id.csr_pem, &member, &allowed, 30).unwrap();
+        let pem = reloaded
+            .sign_csr(&id.csr_pem, &member, &allowed, 30)
+            .unwrap();
         let info = inspect_cert_pem(&pem).unwrap();
         assert_eq!(info.member, member);
         assert_eq!(info.public_key.len(), 32);
