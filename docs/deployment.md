@@ -72,6 +72,7 @@ rate_limit_per_sec     = 50      # per calling member
 max_body_bytes         = 2097152
 upstream_timeout_secs  = 15
 outbox_max_attempts    = 20
+renew_before_days      = 30      # renew the certificate automatically; 0 = off (warns instead)
 
 # a provider lists its services and who may use each one (default deny)
 [[services]]
@@ -119,7 +120,7 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 | Revoke a member | `zroad-cli member-revoke …` (final) |
 | See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token … --subject 2000123456` |
 | Fetch a stored proof | `GET /admin/v1/proofs/<message_id>` |
-| Renew a certificate (before it expires) | `zroad-cli renew --central https://central.example.zw:8443 --dir ./zimra --san ss.zimra.example.zw`, then restart the security server |
+| Renew a certificate now | `POST /admin/v1/renew` on a running security server (automatic when under `renew_before_days`). Offline alternative: `zroad-cli renew --central … --dir … --san …`, then restart |
 | Check certificate expiry | `GET /admin/v1/identity` (a warning is also logged under 30 days) |
 | Demo citizen page | `citizen-portal --security-server http://127.0.0.1:7002 --admin-token … --directory <data_dir>/directory.json` (demo only: it does not authenticate citizens) |
 
@@ -136,5 +137,5 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 * Put the internal listener on a private interface, set `internal_token`.
 * Run the network listener behind a firewall that allows only members' addresses where possible.
 * Give each service a least-privilege upstream credential rather than an open URL.
-* Monitor certificate expiry (certificates are valid for 365 days; renew with `zroad-cli renew` well before then, ideally from a scheduled job; a restart is needed to load the new certificate).
+* Monitor certificate expiry (certificates are valid for 365 days; security servers renew themselves 30 days out by default; keep an alert on renewal failures in the logs).
 * Ship audit logs and the directory to append-only storage.

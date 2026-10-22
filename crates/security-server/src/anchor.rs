@@ -38,7 +38,7 @@ pub async fn anchor_once(st: &AppState) -> Result<Option<u64>> {
         &format!("{}/v1/timestamp", tsa.endpoint.trim_end_matches('/')),
         &[("content-type", "application/json")],
         Bytes::from(serde_json::to_vec(&serde_json::json!({ "digest": hash }))?),
-        Some(&st.tls_client),
+        Some(&st.identity().tls_client),
         Duration::from_secs(10),
     )
     .await?;

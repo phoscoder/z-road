@@ -39,6 +39,9 @@ fn d_body() -> usize {
 fn d_timeout() -> u64 {
     15
 }
+fn d_renew() -> i64 {
+    30
+}
 fn d_attempts() -> u32 {
     20
 }
@@ -71,6 +74,10 @@ pub struct Config {
     pub upstream_timeout_secs: u64,
     #[serde(default = "d_attempts")]
     pub outbox_max_attempts: u32,
+    /// Renew the certificate automatically when fewer than this many days
+    /// remain. 0 disables automatic renewal (a warning is still logged).
+    #[serde(default = "d_renew")]
+    pub renew_before_days: i64,
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
     #[serde(default)]

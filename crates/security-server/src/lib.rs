@@ -9,6 +9,7 @@ pub mod consumer;
 pub mod internal;
 pub mod outbox;
 pub mod provider;
+pub mod renew;
 pub mod state;
 pub mod worker;
 
@@ -103,15 +104,21 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
     }
 
     let tls_client = tls::client_config(&ca, Some((&cert, &key)))?;
+    let server_cert = tls::ReloadableCert::new(&cert, &key)?;
     let proofs_dir = dir.join("proofs");
     std::fs::create_dir_all(&proofs_dir)?;
     let dedupe = seed_dedupe(&audit_path, &cfg);
     let st = Arc::new(AppState {
-        signer: Arc::new(SoftwareSigner::from_pkcs8_pem(&key).map_err(|e| anyhow!("{e}"))?),
-        cert_pem: cert.clone(),
+        ca_pem: ca.clone(),
+        identity: AppState::new_identity_lock(state::Identity {
+            signer: Arc::new(SoftwareSigner::from_pkcs8_pem(&key).map_err(|e| anyhow!("{e}"))?),
+            cert_pem: cert.clone(),
+            tls_client,
+        }),
+        server_cert: server_cert.clone(),
+        renewing: tokio::sync::Mutex::new(()),
         audit,
         dir: directory,
-        tls_client,
         dedupe: Mutex::new(dedupe),
         rate: Mutex::new(HashMap::new()),
         subject_key,
@@ -127,7 +134,7 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
             cfg.max_body_bytes * 2 + 4096,
         ))
         .with_state(st.clone());
-    let net_tls = tls::server_config(&ca, &cert, &key, tls::ClientAuth::Required)?;
+    let net_tls = tls::server_config_reloadable(&ca, server_cert, tls::ClientAuth::Required)?;
     let network = server::spawn(&cfg.network_listen, Some(net_tls), net_router).await?;
     let internal = server::spawn(&cfg.internal_listen, None, internal::router(st.clone())).await?;
 
@@ -135,7 +142,7 @@ pub async fn spawn(cfg: Config) -> Result<Running> {
         tokio::spawn(worker::directory_loop(st.clone())),
         tokio::spawn(worker::outbox_loop(st.clone())),
         tokio::spawn(worker::anchor_loop(st.clone())),
-        tokio::spawn(worker::expiry_loop(st.clone())),
+        tokio::spawn(renew::renew_loop(st.clone())),
     ];
     tracing::info!(
         "security server for {} up: network https://{} internal http://{}",

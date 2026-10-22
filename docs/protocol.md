@@ -61,7 +61,9 @@ server checks that the presented certificate is the one registered for an
 `active` member, then issues a new one for the same member id and endpoint host
 and updates the directory. Peers stop accepting the old certificate as soon as
 they refresh their directory (the fingerprint no longer matches), even though it
-is still signed by the CA and unexpired. A member whose certificate has already
+is still signed by the CA and unexpired. A security server does this by itself when fewer than
+`renew_before_days` (default 30) remain, and swaps the new certificate in without
+a restart (`POST /admin/v1/renew` does it on demand). A member whose certificate has already
 expired must be re-registered and re-enrolled with a new token.
 
 ## 4. Directory

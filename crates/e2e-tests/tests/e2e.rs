@@ -849,3 +849,68 @@ async fn certificate_renewal_retires_the_old_identity() {
         (403, "member_not_active")
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn renewal_without_restart() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let _z = net.run(&zimra, true).await;
+    let _b = net.run(&buyer, false).await;
+    let old = RawClient::new(&buyer, &zimra);
+    let body = br#"{"tin":"2000123456"}"#;
+    assert_eq!(
+        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
+            .await
+            .0,
+        200
+    );
+    let fp_before = {
+        let (_, who) = get_json(
+            &buyer.internal("/admin/v1/identity"),
+            &[("authorization", &format!("Bearer {ADMIN}"))],
+        )
+        .await;
+        who["certificate_fingerprint"].as_str().unwrap().to_string()
+    };
+
+    // Renew the consumer and then the provider, both live.
+    let auth = format!("Bearer {ADMIN}");
+    for m in [&buyer, &zimra] {
+        let r = zroad_net::request(
+            "POST",
+            &m.internal("/admin/v1/renew"),
+            &[("authorization", &auth)],
+            Bytes::new(),
+            None,
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    }
+    let (_, who) = get_json(
+        &buyer.internal("/admin/v1/identity"),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_ne!(who["certificate_fingerprint"].as_str().unwrap(), fp_before);
+    assert!(buyer.dir.join("cert.pem.prev").exists());
+
+    // Traffic keeps flowing with the new certificates on both sides.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
+            .await
+            .0,
+        200
+    );
+    // The retired key is refused.
+    let (s, v) = old
+        .send(&old.envelope(&random_id(), body), body, None)
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (403, "member_not_active")
+    );
+}

@@ -4,7 +4,8 @@ use anyhow::{anyhow, Context, Result};
 use rustls::crypto::ring as provider;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::WebPkiClientVerifier;
+use rustls::server::{ClientHello, ResolvesServerCert, WebPkiClientVerifier};
+use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
 
 fn roots(ca_pem: &str) -> Result<RootCertStore> {
@@ -78,4 +79,59 @@ pub fn server_config(
     Ok(Arc::new(
         builder.with_single_cert(certs(cert_pem)?, key(key_pem)?)?,
     ))
+}
+
+/// A server certificate that can be swapped while the server keeps running, so
+/// a renewed certificate takes effect for new connections without a restart.
+#[derive(Debug)]
+pub struct ReloadableCert {
+    inner: std::sync::RwLock<Arc<CertifiedKey>>,
+}
+
+fn certified(cert_pem: &str, key_pem: &str) -> Result<Arc<CertifiedKey>> {
+    let signing_key = provider::sign::any_supported_type(&key(key_pem)?)
+        .map_err(|e| anyhow!("unsupported private key: {e}"))?;
+    Ok(Arc::new(CertifiedKey::new(certs(cert_pem)?, signing_key)))
+}
+
+impl ReloadableCert {
+    pub fn new(cert_pem: &str, key_pem: &str) -> Result<Arc<Self>> {
+        Ok(Arc::new(Self {
+            inner: std::sync::RwLock::new(certified(cert_pem, key_pem)?),
+        }))
+    }
+
+    pub fn set(&self, cert_pem: &str, key_pem: &str) -> Result<()> {
+        let next = certified(cert_pem, key_pem)?;
+        *self.inner.write().unwrap_or_else(|p| p.into_inner()) = next;
+        Ok(())
+    }
+}
+
+impl ResolvesServerCert for ReloadableCert {
+    fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        Some(self.inner.read().unwrap_or_else(|p| p.into_inner()).clone())
+    }
+}
+
+/// Like [`server_config`], but the certificate comes from `resolver`.
+pub fn server_config_reloadable(
+    ca_pem: &str,
+    resolver: Arc<ReloadableCert>,
+    client_auth: ClientAuth,
+) -> Result<Arc<ServerConfig>> {
+    let p = Arc::new(provider::default_provider());
+    let builder =
+        ServerConfig::builder_with_provider(p.clone()).with_safe_default_protocol_versions()?;
+    let builder = match client_auth {
+        ClientAuth::None => builder.with_no_client_auth(),
+        ClientAuth::Required | ClientAuth::Optional => {
+            let mut v = WebPkiClientVerifier::builder_with_provider(Arc::new(roots(ca_pem)?), p);
+            if client_auth == ClientAuth::Optional {
+                v = v.allow_unauthenticated();
+            }
+            builder.with_client_cert_verifier(v.build()?)
+        }
+    };
+    Ok(Arc::new(builder.with_cert_resolver(resolver)))
 }

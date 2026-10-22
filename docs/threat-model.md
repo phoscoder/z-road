@@ -52,7 +52,7 @@ assurance for a production deployment.
 ## Known gaps (not yet addressed)
 
 1. HSM or PKCS#11 support for keys, and an offline root CA.
-2. Automatic, scheduled renewal with hot reload of the new certificate (today: run `zroad-cli renew` and restart), and verifying old proofs after key rotation (a proof is checked against the key in today's directory). Expiry is monitored: a warning is logged under 30 days and `GET /admin/v1/identity` reports days left.
+2. Verifying old proofs after key rotation (a proof is checked against the key in today's directory). Renewal itself is automatic with hot reload; the timestamp authority and central server still need a restart to pick up a renewed certificate.
 3. Replay cache shared between several instances of one security server.
 4. Authenticated, role-based admin and citizen-facing access, instead of a shared bearer token. The citizen-facing "who accessed my data" view needs identity proofing of the citizen before the admin endpoint is ever called.
 5. Directory integrity beyond TLS to the central server (for example signing directory snapshots).

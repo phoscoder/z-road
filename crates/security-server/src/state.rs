@@ -95,13 +95,21 @@ pub struct DedupeEntry {
     pub state: DedupeState,
 }
 
-pub struct AppState {
-    pub cfg: Config,
+/// Everything that changes when a certificate is renewed.
+pub struct Identity {
     pub signer: Arc<dyn Signer>,
     pub cert_pem: String,
+    pub tls_client: Arc<ClientConfig>,
+}
+
+pub struct AppState {
+    pub cfg: Config,
+    pub ca_pem: String,
+    pub identity: RwLock<Arc<Identity>>,
+    pub server_cert: Arc<zroad_net::tls::ReloadableCert>,
+    pub renewing: tokio::sync::Mutex<()>,
     pub audit: Arc<AuditLog>,
     pub dir: DirectoryCache,
-    pub tls_client: Arc<ClientConfig>,
     pub dedupe: Mutex<HashMap<String, DedupeEntry>>,
     pub rate: Mutex<HashMap<String, (u64, u32)>>,
     pub subject_key: Vec<u8>,
@@ -111,7 +119,23 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn new_identity_lock(id: Identity) -> RwLock<Arc<Identity>> {
+        RwLock::new(Arc::new(id))
+    }
+
+    /// The current identity. Cheap; call it once per operation.
+    pub fn identity(&self) -> Arc<Identity> {
+        self.identity
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    pub fn set_identity(&self, id: Identity) {
+        *self.identity.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(id);
+    }
+
     pub fn own_info(&self) -> Result<pki::CertInfo> {
-        pki::inspect_cert_pem(&self.cert_pem).map_err(|e| anyhow::anyhow!("{e}"))
+        pki::inspect_cert_pem(&self.identity().cert_pem).map_err(|e| anyhow::anyhow!("{e}"))
     }
 }

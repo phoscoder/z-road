@@ -408,7 +408,7 @@ fn sign_response(
         body_sha256: body_sha.clone(),
         content_type: content_type.to_string(),
     };
-    let signed = SignedMessage::sign(RESPONSE_DOMAIN, &envelope, st.signer.as_ref())
+    let signed = SignedMessage::sign(RESPONSE_DOMAIN, &envelope, st.identity().signer.as_ref())
         .map_err(|e| reject(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
     Ok((
         ExchangeResponse {
