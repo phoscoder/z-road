@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title>Something is wrong: where do I start?</title><desc>Decision guide for the most serious incidents, from a stolen key to a tampered log.</desc>
+<defs><marker id="a-64748B" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker><marker id="a-E6B800" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#E6B800"/></marker><marker id="a-2B4A9B" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2B4A9B"/></marker><marker id="a-B42318" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B42318"/></marker><marker id="a-1F7A4D" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F7A4D"/></marker><marker id="a-0F172A" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F172A"/></marker><marker id="a-94A3B8" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94A3B8"/></marker><marker id="a-9B1C1C" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9B1C1C"/></marker><filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.12"/></filter></defs>
+<rect x="0.5" y="0.5" width="959" height="599" rx="18" fill="#FBFCFA" stroke="#DDE5DF"/>
+<rect x="0.5" y="0.5" width="959" height="6" rx="3" fill="#1F7A4D"/>
+<text x="40" y="44" font-size="22" font-weight="700" fill="#0F172A">Something is wrong: where do I start?</text><text x="40" y="66" font-size="13" fill="#64748B">Pick the closest description. The incident guide has the full steps.</text>
+<rect x="370" y="84" width="220" height="54" rx="12" fill="#FFF3C4" stroke="#E6B800" stroke-width="1.2" filter="url(#sh)"/>
+<text x="480.0" y="109.0" font-size="14" font-weight="600" fill="#6B5200" text-anchor="middle">What happened?</text>
+<text x="480.0" y="127.0" font-size="11.5" font-weight="400" fill="#8A6D00" text-anchor="middle"></text>
+<path d="M 480,138 C 480,165 175.0,165 175.0,190" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#a-94A3B8)"/>
+<rect x="30" y="190" width="290" height="168" rx="14" fill="#FFFFFF" stroke="#F0A8A8" stroke-width="1.2" filter="url(#sh)"/>
+<rect x="30" y="190" width="290" height="52" rx="14" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<rect x="30" y="220" width="290" height="22" rx="0" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<text x="44" y="212" font-size="12.5" font-weight="700" fill="#9B1C1C" text-anchor="start">A member's key or server is</text>
+<text x="44" y="228" font-size="12.5" font-weight="700" fill="#9B1C1C" text-anchor="start">stolen</text>
+<text x="44" y="266" font-size="13" font-weight="700" fill="#0F172A" text-anchor="start">Revoke the member now</text>
+<text x="44" y="290" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">Authority: member-revoke</text>
+<text x="44" y="308" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">Then re-register under a new member code</text>
+<rect x="44" y="324" width="170" height="22" rx="11.0" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<text x="129.0" y="339.0" font-size="10.5" font-weight="700" fill="#9B1C1C" text-anchor="middle">see 06-incident-response</text>
+<path d="M 480,138 C 480,165 480.0,165 480.0,190" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#a-94A3B8)"/>
+<rect x="335" y="190" width="290" height="168" rx="14" fill="#FFFFFF" stroke="#F0A8A8" stroke-width="1.2" filter="url(#sh)"/>
+<rect x="335" y="190" width="290" height="52" rx="14" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<rect x="335" y="220" width="290" height="22" rx="0" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<text x="349" y="212" font-size="12.5" font-weight="700" fill="#9B1C1C" text-anchor="start">A node (vendor) is compromised</text>
+<text x="349" y="266" font-size="13" font-weight="700" fill="#0F172A" text-anchor="start">Revoke the node</text>
+<text x="349" y="290" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">Hosted members are cut off too.</text>
+<text x="349" y="308" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">Their own keys at their signers are intact</text>
+<rect x="349" y="324" width="170" height="22" rx="11.0" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<text x="434.0" y="339.0" font-size="10.5" font-weight="700" fill="#9B1C1C" text-anchor="middle">see 06-incident-response</text>
+<path d="M 480,138 C 480,165 785.0,165 785.0,190" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#a-94A3B8)"/>
+<rect x="640" y="190" width="290" height="168" rx="14" fill="#FFFFFF" stroke="#F0A8A8" stroke-width="1.2" filter="url(#sh)"/>
+<rect x="640" y="190" width="290" height="52" rx="14" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<rect x="640" y="220" width="290" height="22" rx="0" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<text x="654" y="212" font-size="12.5" font-weight="700" fill="#9B1C1C" text-anchor="start">The CA key is exposed</text>
+<text x="654" y="266" font-size="13" font-weight="700" fill="#0F172A" text-anchor="start">Treat the whole network as compromised</text>
+<text x="654" y="290" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">Stop, rotate the CA, re-enrol everyone,</text>
+<text x="654" y="308" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">give out the new ca.pem</text>
+<rect x="654" y="324" width="170" height="22" rx="11.0" fill="#FDE8E8" stroke="none" stroke-width="0"/>
+<text x="739.0" y="339.0" font-size="10.5" font-weight="700" fill="#9B1C1C" text-anchor="middle">see 06-incident-response</text>
+<path d="M 480,138 C 480,165 175.0,165 175.0,190" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#a-94A3B8)"/>
+<rect x="30" y="378" width="290" height="168" rx="14" fill="#FFFFFF" stroke="#E6B800" stroke-width="1.2" filter="url(#sh)"/>
+<rect x="30" y="378" width="290" height="52" rx="14" fill="#FFF3C4" stroke="none" stroke-width="0"/>
+<rect x="30" y="408" width="290" height="22" rx="0" fill="#FFF3C4" stroke="none" stroke-width="0"/>
+<text x="44" y="400" font-size="12.5" font-weight="700" fill="#6B5200" text-anchor="start">An operator token leaked</text>
+<text x="44" y="454" font-size="13" font-weight="700" fill="#0F172A" text-anchor="start">Remove that operator</text>
+<text x="44" y="478" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">operator-remove; the audit log shows</text>
+<text x="44" y="496" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">what that token did</text>
+<rect x="44" y="512" width="170" height="22" rx="11.0" fill="#FFF3C4" stroke="none" stroke-width="0"/>
+<text x="129.0" y="527.0" font-size="10.5" font-weight="700" fill="#6B5200" text-anchor="middle">see 06-incident-response</text>
+<path d="M 480,138 C 480,165 480.0,165 480.0,190" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#a-94A3B8)"/>
+<rect x="335" y="378" width="290" height="168" rx="14" fill="#FFFFFF" stroke="#E6B800" stroke-width="1.2" filter="url(#sh)"/>
+<rect x="335" y="378" width="290" height="52" rx="14" fill="#FFF3C4" stroke="none" stroke-width="0"/>
+<rect x="335" y="408" width="290" height="22" rx="0" fill="#FFF3C4" stroke="none" stroke-width="0"/>
+<text x="349" y="400" font-size="12.5" font-weight="700" fill="#6B5200" text-anchor="start">A login issuer key leaked</text>
+<text x="349" y="454" font-size="13" font-weight="700" fill="#0F172A" text-anchor="start">Remove it from citizen_assertion_keys</text>
+<text x="349" y="478" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">Citizen answers stop until a new key</text>
+<text x="349" y="496" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">is configured. Assertions last ≤ 10 min</text>
+<rect x="349" y="512" width="170" height="22" rx="11.0" fill="#FFF3C4" stroke="none" stroke-width="0"/>
+<text x="434.0" y="527.0" font-size="10.5" font-weight="700" fill="#6B5200" text-anchor="middle">see 06-incident-response</text>
+<path d="M 480,138 C 480,165 785.0,165 785.0,190" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#a-94A3B8)"/>
+<rect x="640" y="378" width="290" height="168" rx="14" fill="#FFFFFF" stroke="#9DB2E8" stroke-width="1.2" filter="url(#sh)"/>
+<rect x="640" y="378" width="290" height="52" rx="14" fill="#E3EAFB" stroke="none" stroke-width="0"/>
+<rect x="640" y="408" width="290" height="22" rx="0" fill="#E3EAFB" stroke="none" stroke-width="0"/>
+<text x="654" y="400" font-size="12.5" font-weight="700" fill="#2B4A9B" text-anchor="start">An audit log looks altered</text>
+<text x="654" y="454" font-size="13" font-weight="700" fill="#0F172A" text-anchor="start">Verify the chain and the anchors</text>
+<text x="654" y="478" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">zroad-cli audit-verify; compare with the</text>
+<text x="654" y="496" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="start">other party's log of the same message</text>
+<rect x="654" y="512" width="170" height="22" rx="11.0" fill="#E3EAFB" stroke="none" stroke-width="0"/>
+<text x="739.0" y="527.0" font-size="10.5" font-weight="700" fill="#2B4A9B" text-anchor="middle">see 06-incident-response</text>
+</svg>

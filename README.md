@@ -208,17 +208,22 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 
 ## Roadmap
 
-- [x] **Phase 0: Design.** [Protocol spec](docs/protocol.md), addressing scheme, [threat model](docs/threat-model.md).
-- [x] **Phase 1: Proof of concept.** Security servers exchanging signed, logged requests over mTLS, plus a central server.
-- [x] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
-- [x] **Phase 3: Resilience.** Durable outbox, retries with backoff, idempotent redelivery, cached directory.
-- [x] **Phase 4: Transparency.** Access log by data subject and a demo citizen page (`examples/citizen-portal`). A real citizen-facing service still needs identity proofing of the citizen.
-- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, coverage-guided fuzzing of the parsers (`fuzz/`), fail-closed audit logging with a write-ahead record, replay cache rebuilt after restarts, automatic certificate renewal with two-phase rotation, `unsafe` forbidden, clippy in CI. Packaging (Docker Compose, systemd) exists but its container half is checked only by CI (see [packaging](docs/packaging.md)). Still open: a real citizen login integration (the assertion mechanism is built; the login itself is per provider), HSM-backed keys, offline root CA, longer fuzz campaigns, and an independent security review.
-- [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
+![Roadmap: phases 0 to 4 done, phase 5 in progress, then pilot, production and scale](docs/diagrams/roadmap.svg)
 
-Not started: ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
+The full plan, with status per item and the **gate for starting a pilot**, is in
+[ROADMAP.md](ROADMAP.md). In short:
+
+- [x] **Phases 0–4: foundations.** Protocol and threat model; security server, central server and timestamp authority; first use case (ZIMRA tax clearance); resilience; transparency and citizen login; access control with roles; service catalogue with schemas; shared nodes with member-held keys; automatic renewal; clients for Rust and Python; packaging; [guides](guides/README.md).
+- [~] **Phase 5: hardening.** Done: fuzzing, fail-closed audit logging, replay protection across restarts, renewal, `cargo audit`, adversarial tests. **Next:** key custody (offline root CA with an HSM or hardware token), the independent security review, operator MFA, a real citizen login at the first provider, longer fuzz campaigns.
+- [ ] **Phase 6: pilot.** Gated on an accountable authority, legal review and data-sharing agreements, the independent review, and rehearsed runbooks.
+- [ ] **Phase 7: production readiness.** High availability, metrics, signed packages, quotas, more client libraries.
+- [ ] **Phase 8: scale.** More members and services, federation, large payloads, ecosystem.
+
+What decides whether a pilot happens is mostly outside the code: governance, legal, assurance and people. See [ROADMAP.md](ROADMAP.md#outside-the-code-decides-whether-any-of-this-is-used).
 
 ## Documentation
+
+**Start with the [guides](guides/README.md)**: how to deploy securely, a separate guide for every kind of user, how to build an SDK, operations, incident response and troubleshooting. The reference documents:
 
 - [Protocol specification](docs/protocol.md)
 - [Threat model](docs/threat-model.md)

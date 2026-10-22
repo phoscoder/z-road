@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 490" width="960" height="490" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title>Where an SDK fits</title><desc>An SDK wraps the security server's plain HTTP API. It never signs, never holds keys and never speaks mutual TLS.</desc>
+<defs><marker id="a-64748B" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker><marker id="a-E6B800" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#E6B800"/></marker><marker id="a-2B4A9B" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2B4A9B"/></marker><marker id="a-B42318" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B42318"/></marker><marker id="a-1F7A4D" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F7A4D"/></marker><marker id="a-0F172A" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F172A"/></marker><marker id="a-94A3B8" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94A3B8"/></marker><marker id="a-9B1C1C" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9B1C1C"/></marker><filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.12"/></filter></defs>
+<rect x="0.5" y="0.5" width="959" height="489" rx="18" fill="#FBFCFA" stroke="#DDE5DF"/>
+<rect x="0.5" y="0.5" width="959" height="6" rx="3" fill="#1F7A4D"/>
+<text x="40" y="44" font-size="22" font-weight="700" fill="#0F172A">Where an SDK fits</text><text x="40" y="66" font-size="13" fill="#64748B">Your application, the SDK, your own security server, then the network.</text>
+<rect x="30" y="100" width="200" height="84" rx="12" fill="#FFFFFF" stroke="#C9D3CC" stroke-width="1.2" filter="url(#sh)"/>
+<text x="130.0" y="140.0" font-size="14" font-weight="600" fill="#0F172A" text-anchor="middle">Your application</text>
+<text x="130.0" y="158.0" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="middle">ERP · portal · app</text>
+<rect x="250" y="100" width="200" height="84" rx="12" fill="#1F7A4D" stroke="#1F7A4D" stroke-width="1.2" filter="url(#sh)"/>
+<text x="350.0" y="140.0" font-size="14" font-weight="600" fill="#fff" text-anchor="middle">SDK</text>
+<text x="350.0" y="158.0" font-size="11.5" font-weight="400" fill="#CFE9DA" text-anchor="middle">this is the part you build</text>
+<rect x="470" y="100" width="200" height="84" rx="12" fill="#EAF4EE" stroke="#C9DDD0" stroke-width="1.2" filter="url(#sh)"/>
+<text x="570.0" y="140.0" font-size="14" font-weight="600" fill="#14593A" text-anchor="middle">Your security server</text>
+<text x="570.0" y="158.0" font-size="11.5" font-weight="400" fill="#4C7A62" text-anchor="middle">private HTTP listener</text>
+<rect x="690" y="100" width="200" height="84" rx="12" fill="#FFFFFF" stroke="#C9D3CC" stroke-width="1.2" filter="url(#sh)"/>
+<text x="790.0" y="140.0" font-size="14" font-weight="600" fill="#0F172A" text-anchor="middle">Other members</text>
+<text x="790.0" y="158.0" font-size="11.5" font-weight="400" fill="#64748B" text-anchor="middle">over mutual TLS</text>
+<line x1="230" y1="142" x2="250" y2="142" stroke="#1F7A4D" stroke-width="2.4" marker-end="url(#a-1F7A4D)"/>
+<line x1="450" y1="142" x2="470" y2="142" stroke="#1F7A4D" stroke-width="2.4" marker-end="url(#a-1F7A4D)"/>
+<line x1="670" y1="142" x2="690" y2="142" stroke="#1F7A4D" stroke-width="2.4" marker-end="url(#a-1F7A4D)"/>
+<text x="240" y="214" font-size="11" font-weight="400" fill="#64748B" text-anchor="middle" font-style="italic">typed calls</text>
+<text x="460" y="214" font-size="11" font-weight="400" fill="#64748B" text-anchor="middle" font-style="italic">plain HTTP</text>
+<text x="680" y="214" font-size="11" font-weight="400" fill="#64748B" text-anchor="middle" font-style="italic">signed, mTLS</text>
+<rect x="30" y="236" width="450" height="226" rx="16" fill="#EAF4EE" stroke="#C9DDD0" stroke-width="1.2"/>
+<text x="50" y="262" font-size="10.5" font-weight="700" fill="#1F7A4D" text-anchor="start" letter-spacing="1.2">THE SDK DOES</text>
+<text x="52" y="290" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">✓  Builds the call: path, Z-Road-Client, subject, content type</text>
+<text x="52" y="318" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">✓  Tells Z-Road's errors from the provider's own answers</text>
+<text x="52" y="346" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">✓  Gives each error a stable code and a retryable flag</text>
+<text x="52" y="374" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">✓  Queues work for outages: submit, poll, wait</text>
+<text x="52" y="402" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">✓  Hands back the proof, and verifies it if asked</text>
+<text x="52" y="430" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">✓  Supports shared nodes and tokens</text>
+<rect x="500" y="236" width="430" height="226" rx="16" fill="#FDE8E8" stroke="#F0A8A8" stroke-width="1.2"/>
+<text x="520" y="262" font-size="10.5" font-weight="700" fill="#9B1C1C" text-anchor="start" letter-spacing="1.2">THE SDK NEVER</text>
+<text x="522" y="290" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">×  Signs messages or holds a private key</text>
+<text x="522" y="318" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">×  Speaks mutual TLS to other members</text>
+<text x="522" y="346" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">×  Looks up other members or their certificates</text>
+<text x="522" y="374" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">×  Decides who may use a service</text>
+<text x="522" y="402" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">×  Stores the audit log</text>
+<text x="522" y="430" font-size="12.5" font-weight="400" fill="#0F172A" text-anchor="start">×  Retries blindly: it keeps the message id</text>
+</svg>
