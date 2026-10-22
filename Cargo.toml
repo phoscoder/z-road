@@ -7,6 +7,7 @@ members = [
   "crates/timestamp-service",
   "crates/security-server",
   "crates/zroad-cli",
+  "crates/zroad-client",
   "crates/e2e-tests",
   "examples/zimra-clearance",
   "examples/buyer-client",
@@ -51,6 +52,7 @@ x509-parser = "0.16"
 
 zroad-core = { path = "crates/zroad-core" }
 zroad-net = { path = "crates/zroad-net" }
+zroad-client = { path = "crates/zroad-client" }
 central-server = { path = "crates/central-server" }
 timestamp-service = { path = "crates/timestamp-service" }
 security-server = { path = "crates/security-server" }

@@ -214,12 +214,10 @@ name = "buyer-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "clap",
  "serde_json",
  "tokio",
- "zroad-core",
- "zroad-net",
+ "zroad-client",
 ]
 
 [[package]]
@@ -450,6 +448,7 @@ dependencies = [
  "tempfile",
  "timestamp-service",
  "tokio",
+ "zroad-client",
  "zroad-core",
  "zroad-net",
 ]
@@ -1853,6 +1852,20 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "tokio",
+ "zroad-core",
+ "zroad-net",
+]
+
+[[package]]
+name = "zroad-client"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "serde",
+ "serde_json",
+ "thiserror",
  "tokio",
  "zroad-core",
  "zroad-net",

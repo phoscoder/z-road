@@ -54,3 +54,32 @@ pub struct CatalogueEntry {
 pub struct Catalogue {
     pub entries: Vec<CatalogueEntry>,
 }
+
+impl Directory {
+    /// Public key of a member, from its registered certificate.
+    pub fn member_key(&self, id: &MemberId) -> crate::Result<Vec<u8>> {
+        let rec = self
+            .get(id)
+            .ok_or_else(|| crate::Error::Verify(format!("{id} is not in the directory")))?;
+        let pem = rec
+            .cert_pem
+            .as_deref()
+            .ok_or_else(|| crate::Error::Verify(format!("{id} has no certificate")))?;
+        Ok(crate::pki::inspect_cert_pem(pem)?.public_key)
+    }
+
+    /// Check an exchange proof offline: read the parties it names, then verify
+    /// both signatures with their registered keys and the bindings between them.
+    pub fn verify_proof(
+        &self,
+        proof: &crate::msg::Proof,
+    ) -> crate::Result<(crate::msg::RequestEnvelope, crate::msg::ResponseEnvelope)> {
+        let claimed: crate::msg::RequestEnvelope =
+            serde_json::from_slice(&proof.request.payload()?)?;
+        crate::msg::verify_proof(
+            proof,
+            &self.member_key(&claimed.client.member)?,
+            &self.member_key(&claimed.service.member)?,
+        )
+    }
+}

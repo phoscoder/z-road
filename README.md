@@ -156,6 +156,7 @@ z-road/
     security-server/    the main binary: provider and consumer sides, outbox, audit anchoring
     central-server/     certificate authority and member directory
     timestamp-service/  trusted timestamps for audit log anchoring
+    zroad-client/       Rust client library for integrating applications
     zroad-cli/          admin and audit tool: enrol, revoke, verify logs and proofs, citizen access log
     e2e-tests/          whole-network tests over real mutual TLS
   examples/
@@ -193,6 +194,7 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 | Messages | Signed requests and responses, bound together by hash; body hashes; ±5 minute clock window |
 | Access control | Per-service, default-deny rules evaluated by the provider; revocation through the directory |
 | Replay and retries | Per-peer message id cache (rebuilt from the audit log after a restart); identical retries are idempotent |
+| Integration | Plain-HTTP internal API ([OpenAPI](docs/openapi-internal.yaml)), a Rust client library with typed errors, async submit-and-wait and offline proof verification ([guide](docs/integration.md)) |
 | Discovery | A public service catalogue: providers publish what they offer, consumers list it (`zroad-cli catalogue`); access rules stay private |
 | Shared nodes | One security server can host many members with separate keys, logs, tokens and rules ([deployment guide](docs/deployment.md#shared-nodes)); the operator holds the keys |
 | Resilience | Durable async outbox with backoff; cached directory keeps working if the central server is down |
@@ -210,13 +212,14 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, coverage-guided fuzzing, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
-Not started: member-held keys on shared nodes, request and response schemas in the catalogue, ERP plug-ins.
+Not started: member-held keys on shared nodes, request and response schemas in the catalogue, ready-made plug-ins for specific ERP products (the HTTP API, an OpenAPI description and a Rust client exist).
 
 ## Documentation
 
 - [Protocol specification](docs/protocol.md)
 - [Threat model](docs/threat-model.md)
 - [Running Z-Road](docs/deployment.md)
+- [Integrating an application](docs/integration.md) and the [internal API (OpenAPI)](docs/openapi-internal.yaml)
 - [Legal and regulatory considerations](docs/legal-considerations.md)
 - [Pilot plan](docs/pilot-plan.md)
 - [Design note: shared security servers](docs/design/shared-nodes.md) (partly implemented)

@@ -1,0 +1,173 @@
+openapi: 3.0.3
+info:
+  title: Z-Road security server internal API
+  version: "1.0"
+  description: |
+    What an organisation's own systems call. Served on the security server's
+    private listener. On a shared node every path is prefixed with
+    `/m/{instance}/{class}/{code}`. See docs/protocol.md.
+servers:
+  - url: http://127.0.0.1:7001
+paths:
+  /r1/{instance}/{class}/{code}/{subsystem}/{service}/{version}:
+    post:
+      summary: Call a service on another member
+      description: |
+        The body is sent to the provider unchanged. With `Z-Road-Mode: async` the
+        request is queued on a durable outbox and `202` is returned.
+      parameters:
+        - { name: instance,  in: path, required: true, schema: { type: string }, example: ZW }
+        - { name: class,     in: path, required: true, schema: { type: string }, example: GOV }
+        - { name: code,      in: path, required: true, schema: { type: string }, example: ZIMRA }
+        - { name: subsystem, in: path, required: true, schema: { type: string }, example: tax-clearance }
+        - { name: service,   in: path, required: true, schema: { type: string }, example: verify }
+        - { name: version,   in: path, required: true, schema: { type: string }, example: v1 }
+        - name: Z-Road-Client
+          in: header
+          required: true
+          description: Your subsystem, `instance/class/code/subsystem`. Its member must be the member this security server serves.
+          schema: { type: string }
+          example: ZW/COM/12345678/accounts-payable
+        - name: Z-Road-Subject
+          in: header
+          required: false
+          description: The data subject the query is about (max 256 bytes). The provider stores only a keyed hash.
+          schema: { type: string }
+        - name: Z-Road-Mode
+          in: header
+          required: false
+          schema: { type: string, enum: [async] }
+        - name: Authorization
+          in: header
+          required: false
+          description: "`Bearer <internal_token>` when the security server is configured with one."
+          schema: { type: string }
+      requestBody:
+        content:
+          '*/*': { schema: { type: string, format: binary } }
+      responses:
+        '200':
+          description: |
+            The provider's answer, with the provider's own status code (so this can
+            also be a 404 or 400 from their system). Distinguish Z-Road's own errors
+            by the `Z-Road-Error` header.
+          headers:
+            Z-Road-Message-Id: { schema: { type: string } }
+            Z-Road-Provider:   { schema: { type: string } }
+            Z-Road-Proof:
+              description: Base64 of a JSON `Proof` (signed request and response). Omitted when larger than 48 KiB; always stored on the security server.
+              schema: { type: string }
+        '202':
+          description: Queued (async mode).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message_id: { type: string }
+                  status_url: { type: string }
+        default:
+          description: |
+            An error raised by Z-Road (header `Z-Road-Error` is set). Codes:
+            `invalid_request` 400, `unknown_provider` 404, `unknown_service` 404,
+            `access_denied` 403, `member_not_active` 403, `provider_unreachable` 503
+            (with `Retry-After`), `rate_limited` 429, `bad_response` 502,
+            `audit_unavailable` 503, `internal` 500, and the provider-side codes in docs/protocol.md.
+          headers:
+            Z-Road-Error: { schema: { type: string } }
+            Retry-After:  { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /internal/v1/outbox/{message_id}:
+    get:
+      summary: State of a queued request
+      parameters:
+        - { name: message_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Pending (still being retried) or finished.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      state: { type: string, enum: [pending] }
+                      item:
+                        type: object
+                        properties:
+                          attempts: { type: integer }
+                          last_error: { type: string, nullable: true }
+                  - type: object
+                    properties:
+                      state: { type: string, enum: [finished] }
+                      result:
+                        type: object
+                        properties:
+                          state: { type: string, enum: [delivered, failed] }
+                          status: { type: integer, nullable: true }
+                          body_b64: { type: string, nullable: true }
+                          content_type: { type: string, nullable: true }
+                          error: { type: string, nullable: true }
+        '404': { description: Unknown message id. }
+  /admin/v1/access-log:
+    get:
+      summary: Who has looked up this data subject? (provider side)
+      description: Requires the admin token. Put your own citizen authentication in front of it.
+      security: [{ admin: [] }]
+      parameters:
+        - { name: subject, in: query, required: true, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 100, maximum: 1000 } }
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    time_ms: { type: integer }
+                    accessed_by: { type: string }
+                    client: { type: string }
+                    service: { type: string }
+                    message_id: { type: string }
+                    outcome: { type: string }
+  /admin/v1/audit/status:
+    get:
+      summary: Verify the audit log chain
+      security: [{ admin: [] }]
+      responses: { '200': { description: "`verified`, `entries`, `head_hash`, `anchors`." } }
+  /admin/v1/identity:
+    get:
+      summary: This member's certificate and days left
+      security: [{ admin: [] }]
+      responses: { '200': { description: Identity details. } }
+  /admin/v1/proofs/{message_id}:
+    get:
+      summary: The stored proof of an exchange
+      security: [{ admin: [] }]
+      parameters:
+        - { name: message_id, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: A `Proof` document. }, '404': { description: Not found. } }
+  /admin/v1/directory/refresh:
+    post: { summary: Refresh the member directory now, security: [{ admin: [] }], responses: { '200': { description: Refreshed. } } }
+  /admin/v1/anchor:
+    post: { summary: Timestamp the audit log head now, security: [{ admin: [] }], responses: { '200': { description: Anchored or nothing new. } } }
+  /admin/v1/renew:
+    post: { summary: Renew this member's certificate now, security: [{ admin: [] }], responses: { '200': { description: Renewed. } } }
+  /admin/v1/catalogue/publish:
+    post: { summary: Republish this member's services to the catalogue, security: [{ admin: [] }], responses: { '200': { description: Published. } } }
+  /health:
+    get: { summary: Liveness, responses: { '200': { description: ok } } }
+components:
+  securitySchemes:
+    admin: { type: http, scheme: bearer, description: The member's `admin_token`. }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }

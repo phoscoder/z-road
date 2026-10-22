@@ -129,6 +129,8 @@ still works, and a single-member node also serves the unprefixed paths.
 
 ## Calling a service
 
+Application developers: see [integration.md](integration.md). The essentials:
+
 From the consumer's own systems:
 
 ```sh

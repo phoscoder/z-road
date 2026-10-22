@@ -10,9 +10,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-bytes.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-zroad-core.workspace = true
-zroad-net.workspace = true
+zroad-client.workspace = true
