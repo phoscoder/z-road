@@ -49,10 +49,22 @@ assurance for a production deployment.
 | Supply chain | Small dependency set from well-known crates; `unsafe` is forbidden in this workspace; CI runs clippy with `-D warnings` and `cargo audit` (weekly too). `Cargo.lock` is committed. | No `cargo vet`; no reproducible builds; no signed releases. |
 | Malformed input | Strict parsing; identifier grammar rejects `..`, `/` and whitespace in segments; hashes and signatures checked before use; a randomised test feeds garbage to every parser and verifier and requires an error, never a panic. | No coverage-guided fuzzing yet. |
 
+## Shared nodes
+
+When one security server hosts several members, the operator holds all their
+private keys and can sign as any of them; members must trust it as they would a
+bank trusts its card processor. Isolation between members is by configuration:
+separate state directories, separate tokens, internal paths per member, and a
+check that a member's internal API only accepts its own client ids. A bug in that
+routing is the main risk, which is why it has a dedicated end-to-end test. The
+node's TLS server certificate belongs to one hosted member at a time, so
+transport-level identity on a shared node means "a registered node"; the
+provider's signature on each answer is what proves which member answered.
+
 ## Known gaps (not yet addressed)
 
 1. HSM or PKCS#11 support for keys, and an offline root CA.
-2. Automatic, scheduled renewal with hot reload of the new certificate (today: run `zroad-cli renew` and restart), and verifying old proofs after key rotation (a proof is checked against the key in today's directory). Expiry is monitored: a warning is logged under 30 days and `GET /admin/v1/identity` reports days left.
+2. Verifying old proofs after key rotation (a proof is checked against the key in today's directory). Renewal itself is automatic with hot reload; the timestamp authority and central server still need a restart to pick up a renewed certificate.
 3. Replay cache shared between several instances of one security server.
 4. Authenticated, role-based admin and citizen-facing access, instead of a shared bearer token. The citizen-facing "who accessed my data" view needs identity proofing of the citizen before the admin endpoint is ever called.
 5. Directory integrity beyond TLS to the central server (for example signing directory snapshots).

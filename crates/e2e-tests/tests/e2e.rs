@@ -150,13 +150,22 @@ impl Net {
     }
 
     fn config(&self, m: &Member, provides: bool) -> Config {
+        self.config_with(
+            m,
+            provides,
+            ADMIN,
+            &["ZW/COM/12345678", "ZW/COM/55555555/accounts"],
+        )
+    }
+
+    fn config_with(&self, m: &Member, provides: bool, admin: &str, allow: &[&str]) -> Config {
         let services = if provides {
             json!([{ "id": "tax-clearance/verify/v1", "upstream": self.upstream_url }])
         } else {
             json!([])
         };
         let access = if provides {
-            json!([{ "service": "tax-clearance/verify/v1", "allow": ["ZW/COM/12345678", "ZW/COM/55555555/accounts"] }])
+            json!([{ "service": "tax-clearance/verify/v1", "allow": allow }])
         } else {
             json!([])
         };
@@ -166,7 +175,7 @@ impl Net {
             "central_url": self.central_url,
             "network_listen": format!("127.0.0.1:{}", m.net_port),
             "internal_listen": format!("127.0.0.1:{}", m.int_port),
-            "admin_token": ADMIN,
+            "admin_token": admin,
             "directory_refresh_secs": 1,
             "anchor_interval_secs": 0,
             "services": services,
@@ -848,4 +857,225 @@ async fn certificate_renewal_retires_the_old_identity() {
         (s, v["error"].as_str().unwrap()),
         (403, "member_not_active")
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn renewal_without_restart() {
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let _z = net.run(&zimra, true).await;
+    let _b = net.run(&buyer, false).await;
+    let old = RawClient::new(&buyer, &zimra);
+    let body = br#"{"tin":"2000123456"}"#;
+    assert_eq!(
+        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
+            .await
+            .0,
+        200
+    );
+    let fp_before = {
+        let (_, who) = get_json(
+            &buyer.internal("/admin/v1/identity"),
+            &[("authorization", &format!("Bearer {ADMIN}"))],
+        )
+        .await;
+        who["certificate_fingerprint"].as_str().unwrap().to_string()
+    };
+
+    // Renew the consumer and then the provider, both live.
+    let auth = format!("Bearer {ADMIN}");
+    for m in [&buyer, &zimra] {
+        let r = zroad_net::request(
+            "POST",
+            &m.internal("/admin/v1/renew"),
+            &[("authorization", &auth)],
+            Bytes::new(),
+            None,
+            Duration::from_secs(20),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    }
+    let (_, who) = get_json(
+        &buyer.internal("/admin/v1/identity"),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_ne!(who["certificate_fingerprint"].as_str().unwrap(), fp_before);
+    assert!(buyer.dir.join("cert.pem.prev").exists());
+
+    // Traffic keeps flowing with the new certificates on both sides.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        clearance(&buyer, "ZW/COM/12345678/ap", "2000123456")
+            .await
+            .0,
+        200
+    );
+    // The retired key is refused.
+    let (s, v) = old
+        .send(&old.envelope(&random_id(), body), body, None)
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (403, "member_not_active")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shared_node_hosts_several_members_in_isolation() {
+    let net = Net::start().await;
+    let (net_port, int_port) = (free_port(), free_port());
+    let mk = |id: &'static str| Member {
+        id,
+        net_port,
+        int_port,
+        dir: net.tmp.path().join(id.replace('/', "_")),
+    };
+    let zimra = mk("ZW/GOV/ZIMRA");
+    let a = mk("ZW/COM/11111111");
+    let b = mk("ZW/COM/22222222");
+    for m in [&zimra, &a, &b] {
+        net.register(m.id, &m.endpoint(), &m.dir).await;
+    }
+    let standalone = net.member("ZW/COM/33333333").await;
+
+    let (tok_z, tok_a, tok_b) = (
+        "admin-token-zimra-0123",
+        "admin-token-a-0123456789",
+        "admin-token-b-0123456789",
+    );
+    let node = security_server::config::NodeConfig {
+        members: vec![
+            net.config_with(&zimra, true, tok_z, &["ZW/COM/11111111", "ZW/COM/33333333"]),
+            net.config_with(&a, false, tok_a, &[]),
+            net.config_with(&b, false, tok_b, &[]),
+        ],
+        node_dir: net.tmp.path().join("node"),
+    };
+    let running = security_server::spawn_node(node).await.unwrap();
+    assert_eq!(running.members.len(), 3);
+    let mut cfg = net.config(&standalone, false);
+    cfg.admin_token = "admin-token-standalone-0123".into();
+    let _s = security_server::spawn(cfg).await.unwrap();
+
+    let prefixed = |m: &Member, rest: &str| m.internal(&format!("/m/{}{rest}", m.id));
+
+    // Two members of the same node, and a stand-alone member, all reach ZIMRA.
+    let (s, body, _) = post_json(
+        &prefixed(&a, SERVICE_PATH),
+        &[
+            ("z-road-client", "ZW/COM/11111111/ap"),
+            ("z-road-subject", "2000123456"),
+        ],
+        &json!({ "tin": "2000123456" }),
+    )
+    .await;
+    assert_eq!((s, body["status"].as_str().unwrap()), (200, "VALID"));
+    assert_eq!(
+        clearance(&standalone, "ZW/COM/33333333/ap", "2000123456")
+            .await
+            .0,
+        200
+    );
+
+    // ZIMRA's allow-list applies per member, even on the same node.
+    let (s, body, _) = post_json(
+        &prefixed(&b, SERVICE_PATH),
+        &[("z-road-client", "ZW/COM/22222222/ap")],
+        &json!({ "tin": "2000123456" }),
+    )
+    .await;
+    assert_eq!((s, body["error"].as_str().unwrap()), (403, "access_denied"));
+
+    // No bare root paths when several members share the node.
+    let (s, _, _) = post_json(
+        &a.internal(SERVICE_PATH),
+        &[("z-road-client", "ZW/COM/11111111/ap")],
+        &json!({}),
+    )
+    .await;
+    assert_eq!(s, 404);
+    // A member's internal API only speaks for that member.
+    let (s, body, _) = post_json(
+        &prefixed(&a, SERVICE_PATH),
+        &[("z-road-client", "ZW/COM/22222222/ap")],
+        &json!({}),
+    )
+    .await;
+    assert_eq!(
+        (s, body["error"].as_str().unwrap()),
+        (400, "invalid_request")
+    );
+
+    // Admin credentials are per member.
+    let wrong = format!("Bearer {tok_b}");
+    let right = format!("Bearer {tok_a}");
+    let (s, _) = get_json(
+        &prefixed(&a, "/admin/v1/audit/status"),
+        &[("authorization", &wrong)],
+    )
+    .await;
+    assert_eq!(s, 401);
+    let (s, st) = get_json(
+        &prefixed(&a, "/admin/v1/audit/status"),
+        &[("authorization", &right)],
+    )
+    .await;
+    assert_eq!((s, &st["verified"]), (200, &json!(true)));
+
+    // Audit logs are separate per member.
+    let peers_of = |m: &Member| -> Vec<String> {
+        audit::read_entries(&m.dir.join("audit/log.jsonl"))
+            .unwrap()
+            .into_iter()
+            .filter_map(|e| match e.event {
+                audit::AuditEvent::Exchange {
+                    peer,
+                    role,
+                    outcome,
+                    ..
+                } => Some(format!("{role}:{peer}:{outcome}")),
+                _ => None,
+            })
+            .collect()
+    };
+    let zl = peers_of(&zimra);
+    assert!(
+        zl.contains(&"provider:ZW/COM/11111111:ok".to_string()),
+        "{zl:?}"
+    );
+    assert!(
+        zl.contains(&"provider:ZW/COM/33333333:ok".to_string()),
+        "{zl:?}"
+    );
+    assert!(
+        zl.contains(&"provider:ZW/COM/22222222:denied:access_denied".to_string()),
+        "{zl:?}"
+    );
+    assert_eq!(peers_of(&a), vec!["consumer:ZW/GOV/ZIMRA:ok"]);
+    assert_eq!(
+        peers_of(&b),
+        vec!["consumer:ZW/GOV/ZIMRA:error:access_denied"]
+    );
+
+    // The citizen view on the shared node sees both consumers.
+    let (s, log) = get_json(
+        &prefixed(&zimra, "/admin/v1/access-log?subject=2000123456"),
+        &[("authorization", &format!("Bearer {tok_z}"))],
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(log.as_array().unwrap().len(), 2, "{log}");
+
+    // A request for a member the node does not host is refused up front.
+    let raw = RawClient::new(&standalone, &zimra);
+    let body = br#"{}"#;
+    let mut env = raw.envelope(&random_id(), body);
+    env.service = "ZW/GOV/OTHER/tax-clearance/verify/v1".parse().unwrap();
+    let (s, v) = raw.send(&env, body, None).await;
+    assert_eq!((s, v["error"].as_str().unwrap()), (400, "wrong_provider"));
+    running.shutdown();
 }

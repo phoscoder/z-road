@@ -1,6 +1,30 @@
 # Design note: shared security servers
 
-**Status: proposal. Nothing here is implemented.**
+**Status: partly implemented.** Operator-held keys (mode 1 below) work today: one
+security server process can host several members, each with its own identity,
+audit log, outbox, tokens, services and access rules, behind shared listeners.
+Member-held keys (mode 2), SNI-based certificate selection and the open
+questions are still proposals. See the *Shared nodes* section of
+[deployment.md](../deployment.md) for how to run one.
+
+### What was built, and how it differs from the sketch
+
+* One mutual-TLS listener and one internal listener serve every hosted member.
+* Incoming requests are routed by the `service.member` in the signed envelope
+  (peeked at before verification, then fully verified by the chosen member).
+  A request for a member the node does not host is refused as `wrong_provider`
+  and only logged to the process log, because no hosted member is accountable
+  for it.
+* The node's TLS server presents one certificate slot shared by all its members;
+  whichever member renewed most recently puts its fresh certificate there. Peers
+  check chain and host name at the TLS layer. The identity they rely on is the
+  provider's signature on each answer, checked against the directory.
+* Outbound calls use the calling member's own certificate, so the provider sees
+  the right authenticated peer.
+* Internal API paths are `/m/<instance>/<class>/<code>/...` on a multi-member
+  node, with per-member tokens. Members cannot call or administer each other.
+* The directory cache is node-level (`node_dir`), not per member.
+
 
 ## Problem
 

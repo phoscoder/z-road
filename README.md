@@ -188,11 +188,12 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 
 | Area | Implemented |
 | --- | --- |
-| Identity | Private CA; Ed25519 member keys; enrolment with one-time tokens; renewal that retires the old key; certificate subject always the member id |
+| Identity | Private CA; Ed25519 member keys; enrolment with one-time tokens; automatic renewal with hot reload that retires the old key; certificate subject always the member id |
 | Transport | Mutual TLS between security servers (`rustls`, `ring`) |
 | Messages | Signed requests and responses, bound together by hash; body hashes; ±5 minute clock window |
 | Access control | Per-service, default-deny rules evaluated by the provider; revocation through the directory |
 | Replay and retries | Per-peer message id cache (rebuilt from the audit log after a restart); identical retries are idempotent |
+| Shared nodes | One security server can host many members with separate keys, logs, tokens and rules ([deployment guide](docs/deployment.md#shared-nodes)); the operator holds the keys |
 | Resilience | Durable async outbox with backoff; cached directory keeps working if the central server is down |
 | Accountability | Hash-chained audit log on both sides, refuses to start on a broken chain, periodic trusted-timestamp anchors |
 | Proofs | A signed proof header on every answer, verifiable offline with `zroad-cli proof-verify` |
@@ -205,10 +206,10 @@ See [docs/deployment.md](docs/deployment.md) for setting up a network by hand an
 - [x] **Phase 2: First use case.** ZIMRA tax clearance provider and buyer client.
 - [x] **Phase 3: Resilience.** Durable outbox, retries with backoff, idempotent redelivery, cached directory.
 - [x] **Phase 4: Transparency.** Access log by data subject and a demo citizen page (`examples/citizen-portal`). A real citizen-facing service still needs identity proofing of the citizen.
-- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, scheduled renewal with hot reload, coverage-guided fuzzing, and an independent security review.
+- [~] **Phase 5: Hardening.** Done: trusted timestamp anchoring, protocol specification, rate limits and timeouts, adversarial tests, replay cache rebuilt after restarts, certificate renewal and expiry monitoring, `unsafe` forbidden, clippy in CI. Still open: HSM-backed keys, offline root CA, coverage-guided fuzzing, and an independent security review.
 - [ ] **Phase 6: Pilot.** A [plan](docs/pilot-plan.md) exists; it needs the legal groundwork in [docs/legal-considerations.md](docs/legal-considerations.md) and the open Phase 5 items first.
 
-Not started: shared security servers hosting many members (a [design note](docs/design/shared-nodes.md) exists), a service catalogue, ERP plug-ins.
+Not started: member-held keys on shared nodes, a service catalogue, ERP plug-ins.
 
 ## Documentation
 
@@ -217,7 +218,7 @@ Not started: shared security servers hosting many members (a [design note](docs/
 - [Running Z-Road](docs/deployment.md)
 - [Legal and regulatory considerations](docs/legal-considerations.md)
 - [Pilot plan](docs/pilot-plan.md)
-- [Design note: shared security servers](docs/design/shared-nodes.md) (proposal)
+- [Design note: shared security servers](docs/design/shared-nodes.md) (partly implemented)
 - [Security policy](SECURITY.md) and [contributing guide](CONTRIBUTING.md)
 
 ## Contributing

@@ -32,6 +32,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/admin/v1/access-log", get(access_log))
         .route("/admin/v1/audit/status", get(audit_status))
         .route("/admin/v1/identity", get(identity))
+        .route("/admin/v1/renew", post(renew_now))
         .route("/admin/v1/proofs/:id", get(proof))
         .route("/admin/v1/directory/refresh", post(refresh_directory))
         .route("/admin/v1/anchor", post(anchor_now))
@@ -374,5 +375,17 @@ async fn identity(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
             .into_response()
         }
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()),
+    }
+}
+
+/// Renew this member's certificate now, without restarting.
+async fn renew_now(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = check_admin(&st, &headers) {
+        return r;
+    }
+    match crate::renew::renew(&st).await {
+        Ok(fp) => Json(serde_json::json!({ "renewed": true, "certificate_fingerprint": fp }))
+            .into_response(),
+        Err(e) => error(StatusCode::BAD_GATEWAY, "renew_failed", e.to_string()),
     }
 }

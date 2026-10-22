@@ -15,7 +15,7 @@ what breaks in real Zimbabwean network conditions.
 ## Candidate use case: supplier tax clearance check
 
 * **Provider:** ZIMRA (or a ZIMRA-approved test environment). Service returns status and expiry for a TIN. No other data.
-* **Consumers:** two or three companies with accounts-payable systems, plus an accounting software vendor running one shared node for several small customers (requires the shared-node feature, which does not exist yet).
+* **Consumers:** two or three companies with accounts-payable systems, plus an accounting software vendor running one shared node for several small customers (uses the shared-node feature; see the deployment guide for its trust model).
 * **Why this one:** read-only, narrow, low privacy risk, and a visible pain point today.
 
 ## Scope for a first pilot

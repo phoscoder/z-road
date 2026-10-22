@@ -106,7 +106,7 @@ pub async fn call(st: &AppState, p: &CallParams) -> Result<CallSuccess, CallErro
         content_type: p.content_type.clone(),
         subject: p.subject.clone(),
     };
-    let signed = SignedMessage::sign(REQUEST_DOMAIN, &envelope, st.signer.as_ref())
+    let signed = SignedMessage::sign(REQUEST_DOMAIN, &envelope, st.identity().signer.as_ref())
         .map_err(|e| CallError::Internal(e.to_string()))?;
     let request_sha = signed
         .payload_sha256()
@@ -180,7 +180,7 @@ async fn exchange(
         &url,
         &[("content-type", "application/json")],
         Bytes::from(body),
-        Some(&st.tls_client),
+        Some(&st.identity().tls_client),
         std::time::Duration::from_secs(st.cfg.upstream_timeout_secs + 5),
     )
     .await

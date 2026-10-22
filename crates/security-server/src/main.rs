@@ -33,16 +33,20 @@ async fn main() -> Result<()> {
         .init();
     match Cli::parse().cmd {
         Cmd::Run { config } => {
-            let running = security_server::spawn(security_server::Config::load(&config)?).await?;
+            let running =
+                security_server::spawn_node(security_server::config::NodeConfig::load(&config)?)
+                    .await?;
             running.wait().await;
         }
         Cmd::CheckConfig { config } => {
-            let cfg = security_server::Config::load(&config)?;
-            println!(
-                "ok: {} provides {} service(s)",
-                cfg.member_id,
-                cfg.services.len()
-            );
+            let node = security_server::config::NodeConfig::load(&config)?;
+            for cfg in &node.members {
+                println!(
+                    "ok: {} provides {} service(s)",
+                    cfg.member_id,
+                    cfg.services.len()
+                );
+            }
         }
     }
     Ok(())

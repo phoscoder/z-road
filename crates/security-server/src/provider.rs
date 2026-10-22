@@ -44,11 +44,52 @@ struct Attempt {
 pub const DEDUPE_TTL_MS: u64 = 15 * 60 * 1000;
 const DEDUPE_MAX: usize = 100_000;
 
+/// The network entry point. A shared node hosts several members, so the first
+/// job is to find the one being addressed. The envelope is only peeked at here
+/// (unverified); the chosen member then checks everything properly.
 pub async fn exchange(
-    State(st): State<Arc<AppState>>,
+    State(node): State<Arc<crate::state::Node>>,
     Extension(peer): Extension<Option<PeerCert>>,
     body: Bytes,
 ) -> Response {
+    let st = match &node.only {
+        Some(only) => only.clone(),
+        None => match target_member(&body).and_then(|m| node.members.get(&m).cloned()) {
+            Some(st) => st,
+            None => {
+                tracing::warn!("request for a member this node does not host");
+                let mut r = (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorBody {
+                        error: "wrong_provider".into(),
+                        message: "this security server does not serve that member".into(),
+                    }),
+                )
+                    .into_response();
+                r.headers_mut()
+                    .insert("z-road-error", "wrong_provider".parse().expect("static"));
+                return r;
+            }
+        },
+    };
+    exchange_for(st, peer, body).await
+}
+
+fn target_member(raw: &[u8]) -> Option<zroad_core::id::MemberId> {
+    #[derive(serde::Deserialize)]
+    struct Wire {
+        request: SignedMessage,
+    }
+    #[derive(serde::Deserialize)]
+    struct Peek {
+        service: zroad_core::id::ServiceId,
+    }
+    let wire: Wire = serde_json::from_slice(raw).ok()?;
+    let peek: Peek = serde_json::from_slice(&wire.request.payload().ok()?).ok()?;
+    Some(peek.service.member)
+}
+
+async fn exchange_for(st: Arc<AppState>, peer: Option<PeerCert>, body: Bytes) -> Response {
     let mut a = Attempt::default();
     match process(&st, peer, &body, &mut a).await {
         Ok((resp, status, response_sha, duplicate)) => {
@@ -408,7 +449,7 @@ fn sign_response(
         body_sha256: body_sha.clone(),
         content_type: content_type.to_string(),
     };
-    let signed = SignedMessage::sign(RESPONSE_DOMAIN, &envelope, st.signer.as_ref())
+    let signed = SignedMessage::sign(RESPONSE_DOMAIN, &envelope, st.identity().signer.as_ref())
         .map_err(|e| reject(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
     Ok((
         ExchangeResponse {

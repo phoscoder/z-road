@@ -31,6 +31,15 @@ impl CentralClient {
         })
     }
 
+    /// Use an existing TLS client configuration (for example one that already
+    /// presents this member's certificate).
+    pub fn from_tls(base_url: &str, tls: Arc<ClientConfig>) -> Self {
+        Self {
+            base: base_url.trim_end_matches('/').to_string(),
+            tls,
+        }
+    }
+
     /// Like [`new`](Self::new) but presents a member certificate (needed to renew).
     pub fn with_identity(
         base_url: &str,

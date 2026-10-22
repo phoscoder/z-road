@@ -72,6 +72,7 @@ rate_limit_per_sec     = 50      # per calling member
 max_body_bytes         = 2097152
 upstream_timeout_secs  = 15
 outbox_max_attempts    = 20
+renew_before_days      = 30      # renew the certificate automatically; 0 = off (warns instead)
 
 # a provider lists its services and who may use each one (default deny)
 [[services]]
@@ -89,6 +90,40 @@ security-server run --config zimra.toml
 ```
 
 A pure consumer has no `[[services]]` or `[[access]]`.
+
+## Shared nodes
+
+One security server process can host several members, for example an accounting
+vendor serving its small customers. Each member is enrolled separately (own key,
+own certificate, same endpoint host) and keeps its own state. Use a node file:
+
+```toml
+central_url     = "https://central.example.zw:8443"
+network_listen  = "0.0.0.0:7443"
+internal_listen = "10.0.0.5:7001"
+node_dir        = "node"                  # directory cache
+
+[[members]]
+member_id   = "ZW/COM/11111111"
+data_dir    = "acme"
+admin_token = "a-long-random-token-for-acme"
+internal_token = "another-token-for-acme-systems"
+
+[[members]]
+member_id   = "ZW/COM/22222222"
+data_dir    = "bravo"
+admin_token = "a-different-long-token-for-bravo"
+```
+
+Each member's internal API lives under its own prefix:
+`/m/ZW/COM/11111111/r1/ZW/GOV/ZIMRA/tax-clearance/verify/v1`, with admin
+endpoints at `/m/ZW/COM/11111111/admin/v1/...`. Tokens, audit logs, outboxes,
+proofs and access rules are per member, and a member's internal API only accepts
+its own `Z-Road-Client` subsystems. Members must not share a `data_dir` or an
+admin token (startup refuses). The operator holds every hosted member's private
+key, so the operator can sign as them: only use this where the legal agreement
+between member and operator says so. A single-member file in the original format
+still works, and a single-member node also serves the unprefixed paths.
 
 ## Calling a service
 
@@ -119,7 +154,7 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 | Revoke a member | `zroad-cli member-revoke …` (final) |
 | See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token … --subject 2000123456` |
 | Fetch a stored proof | `GET /admin/v1/proofs/<message_id>` |
-| Renew a certificate (before it expires) | `zroad-cli renew --central https://central.example.zw:8443 --dir ./zimra --san ss.zimra.example.zw`, then restart the security server |
+| Renew a certificate now | `POST /admin/v1/renew` on a running security server (automatic when under `renew_before_days`). Offline alternative: `zroad-cli renew --central … --dir … --san …`, then restart |
 | Check certificate expiry | `GET /admin/v1/identity` (a warning is also logged under 30 days) |
 | Demo citizen page | `citizen-portal --security-server http://127.0.0.1:7002 --admin-token … --directory <data_dir>/directory.json` (demo only: it does not authenticate citizens) |
 
@@ -136,5 +171,5 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 * Put the internal listener on a private interface, set `internal_token`.
 * Run the network listener behind a firewall that allows only members' addresses where possible.
 * Give each service a least-privilege upstream credential rather than an open URL.
-* Monitor certificate expiry (certificates are valid for 365 days; renew with `zroad-cli renew` well before then, ideally from a scheduled job; a restart is needed to load the new certificate).
+* Monitor certificate expiry (certificates are valid for 365 days; security servers renew themselves 30 days out by default; keep an alert on renewal failures in the logs).
 * Ship audit logs and the directory to append-only storage.
