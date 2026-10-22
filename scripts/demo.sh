@@ -79,7 +79,13 @@ anchor_interval_secs = 5
 EOF
 bg "$BIN/security-server" run --config "$WORK/zimra.toml"
 bg "$BIN/security-server" run --config "$WORK/buyer.toml"
-sleep 2
+for port in 7001 7002; do
+  for _ in $(seq 1 60); do
+    curl -fs "http://127.0.0.1:$port/health" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+done
+sleep 1   # let the services publish their catalogue entries
 
 echo
 echo "==> what is on offer? (the public service catalogue)"
@@ -107,3 +113,7 @@ sleep 7
 "$CLI" audit-verify --log "$WORK/zimra/audit/log.jsonl" --directory "$WORK/zimra/directory.json"
 echo
 echo "Logs: $WORK/logs.txt"
+if [ -n "${ZROAD_DEMO_KEEP_SECS:-}" ]; then
+  echo "Leaving the network running for ${ZROAD_DEMO_KEEP_SECS}s (buyer security server on http://127.0.0.1:7001)"
+  sleep "$ZROAD_DEMO_KEEP_SECS"
+fi

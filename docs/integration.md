@@ -69,7 +69,7 @@ let (request, response) = reply.verify(&directory)?;   // live replies only
 
 The same call in a few lines. Treat a `Z-Road-Error` header as the error signal.
 
-**Python**
+**Python**: there is a tested client library in its own repository (`zroad-client-python`: `call`, `submit`/`wait`, typed errors). The bare-HTTP version:
 
 ```python
 import requests
@@ -103,7 +103,7 @@ var res = await http.SendAsync(req);
 if (res.Headers.Contains("Z-Road-Error")) { /* Z-Road error: read res.Content as {error, message} */ }
 ```
 
-These snippets are illustrations, not tested library code.
+The PHP and C# snippets are illustrations I have not run; the Python library has its own tests and was run against the demo network.
 
 ## Tips for ERP integrations
 
