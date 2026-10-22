@@ -1160,3 +1160,105 @@ async fn catalogue_lists_services_of_active_members() {
         .iter()
         .any(|e| e.service.member.to_string() == "ZW/GOV/ZIMRA"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rust_client_library() {
+    use zroad_client::{CallOptions, Client, ClientError, Queued};
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let stranger = net.member("ZW/COM/77777777").await;
+    let _b = net.run(&buyer, false).await; // ZIMRA is down for now
+    let _s = net.run(&stranger, false).await;
+
+    let svc: zroad_core::id::ServiceId = "ZW/GOV/ZIMRA/tax-clearance/verify/v1".parse().unwrap();
+    let client = Client::new(
+        &format!("http://127.0.0.1:{}", buyer.int_port),
+        "ZW/COM/12345678/accounts-payable".parse().unwrap(),
+    );
+    let opts = CallOptions::default().subject("2000123456");
+
+    // Provider down: a retryable Z-Road error with a stable code.
+    let err = client
+        .call_json(&svc, &json!({ "tin": "2000123456" }), &opts)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Some("provider_unreachable"));
+    assert!(err.is_retryable());
+
+    // Queue it, bring ZIMRA up, and collect the delivered answer.
+    let id = client
+        .submit(&svc, br#"{"tin":"2000123456"}"#.to_vec(), &opts)
+        .await
+        .unwrap();
+    assert!(matches!(
+        client.poll(&id).await.unwrap(),
+        Queued::Pending { .. } | Queued::Delivered(_)
+    ));
+    let _z = net.run(&zimra, true).await;
+    let queued = client.wait(&id, Duration::from_secs(30)).await.unwrap();
+    assert_eq!(queued.json::<Value>().unwrap()["status"], "VALID");
+
+    // A live call returns a verifiable proof.
+    let reply = client
+        .call_json(&svc, &json!({ "tin": "2000123456" }), &opts)
+        .await
+        .unwrap();
+    assert!(reply.is_success());
+    let directory: zroad_core::directory::Directory =
+        serde_json::from_slice(&std::fs::read(buyer.dir.join("directory.json")).unwrap()).unwrap();
+    let (req, res) = reply.verify(&directory).unwrap();
+    assert_eq!(req.client.to_string(), "ZW/COM/12345678/accounts-payable");
+    assert_eq!(res.status, 200);
+
+    // The provider's own 404-style answers are replies, not errors.
+    let nf = client
+        .call_json(
+            &svc,
+            &json!({ "tin": "0000000000" }),
+            &CallOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(nf.json::<Value>().unwrap()["status"], "NOT_FOUND");
+
+    // Z-Road refusals are errors with codes.
+    let other = Client::new(
+        &format!("http://127.0.0.1:{}", stranger.int_port),
+        "ZW/COM/77777777/ap".parse().unwrap(),
+    );
+    match other
+        .call_json(&svc, &json!({}), &CallOptions::default())
+        .await
+    {
+        Err(ClientError::ZRoad {
+            status,
+            code,
+            retryable,
+            ..
+        }) => assert_eq!(
+            (status, code.as_str(), retryable),
+            (403, "access_denied", false)
+        ),
+        other => panic!("expected access_denied, got {other:?}"),
+    }
+    // Claiming another member's subsystem is rejected before leaving the building.
+    let liar = Client::new(
+        &format!("http://127.0.0.1:{}", buyer.int_port),
+        "ZW/COM/77777777/ap".parse().unwrap(),
+    );
+    assert_eq!(
+        liar.call_json(&svc, &json!({}), &CallOptions::default())
+            .await
+            .unwrap_err()
+            .code(),
+        Some("invalid_request")
+    );
+    // A dead security server is Unreachable.
+    let dead = Client::new("http://127.0.0.1:1", "ZW/COM/12345678/ap".parse().unwrap());
+    assert!(matches!(
+        dead.call_json(&svc, &json!({}), &CallOptions::default())
+            .await,
+        Err(ClientError::Unreachable(_))
+    ));
+}

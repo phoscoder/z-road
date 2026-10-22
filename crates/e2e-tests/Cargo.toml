@@ -24,5 +24,6 @@ serde_json.workspace = true
 tempfile.workspace = true
 timestamp-service.workspace = true
 tokio.workspace = true
+zroad-client.workspace = true
 zroad-core.workspace = true
 zroad-net.workspace = true

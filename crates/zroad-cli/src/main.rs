@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use zroad_core::audit::{self, AuditEvent};
 use zroad_core::directory::Directory;
 use zroad_core::id::MemberId;
-use zroad_core::msg::{verify_proof, Proof, RequestEnvelope};
+use zroad_core::msg::Proof;
 use zroad_core::pki;
 use zroad_net::central_client::{enroll_to_dir, CentralClient};
 
@@ -244,13 +244,7 @@ async fn main() -> Result<()> {
         Cmd::ProofVerify { proof, directory } => {
             let p: Proof = serde_json::from_slice(&std::fs::read(&proof)?)?;
             let dir = read_dir_file(&directory)?;
-            // Read the claimed parties first, then check the signatures with their keys.
-            let claimed: RequestEnvelope =
-                serde_json::from_slice(&p.request.payload().map_err(|e| anyhow!("{e}"))?)?;
-            let consumer = member_key(&dir, &claimed.client.member)?;
-            let provider = member_key(&dir, &claimed.service.member)?;
-            let (req, res) =
-                verify_proof(&p, &consumer, &provider).map_err(|e| anyhow!("INVALID: {e}"))?;
+            let (req, res) = dir.verify_proof(&p).map_err(|e| anyhow!("INVALID: {e}"))?;
             println!("VALID");
             println!("  consumer: {}", req.client);
             println!("  service:  {}", req.service);
