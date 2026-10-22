@@ -162,11 +162,37 @@ paths:
     post: { summary: Renew this member's certificate now, security: [{ admin: [] }], responses: { '200': { description: Renewed. } } }
   /admin/v1/catalogue/publish:
     post: { summary: Republish this member's services to the catalogue, security: [{ admin: [] }], responses: { '200': { description: Published. } } }
+  /citizen/v1/access-log:
+    get:
+      summary: Who has looked at my record? (citizen portals)
+      description: |
+        Needs a `portal` operator token and a signed citizen identity assertion in
+        `Z-Road-Citizen-Assertion`. Answers only for the identifier inside the assertion.
+      security: [{ admin: [] }]
+      parameters:
+        - { name: Z-Road-Citizen-Assertion, in: header, required: true, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 100, maximum: 1000 } }
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    time_ms: { type: integer }
+                    accessed_by: { type: string }
+                    service: { type: string }
+                    outcome: { type: string }
+        '401': { description: "citizen_assertion_required or invalid_citizen_assertion." }
+        '403': { description: Not a portal token. }
   /health:
     get: { summary: Liveness, responses: { '200': { description: ok } } }
 components:
   securitySchemes:
-    admin: { type: http, scheme: bearer, description: The member's `admin_token`. }
+    admin: { type: http, scheme: bearer, description: "An operator token. Roles: auditor (read-only), operator (state-changing), admin (everything), portal (citizen endpoint only). The legacy single admin_token is accepted as admin. See docs/access-control.md." }
   schemas:
     Error:
       type: object

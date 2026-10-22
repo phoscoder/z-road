@@ -61,7 +61,11 @@ data_dir         = "zimra"                       # holds key.pem, cert.pem, ca.p
 central_url      = "https://central.example.zw:8443"
 network_listen   = "0.0.0.0:7443"                # mutual TLS, other members connect here
 internal_listen  = "127.0.0.1:7002"              # plain HTTP, your own systems only
-admin_token      = "at-least-16-characters-long"
+# operators are named, with roles and their own tokens (see access-control.md)
+[[operators]]
+name         = "alice"
+role         = "operator"
+token_sha256 = "…"     # from `zroad-cli operator-token`
 
 # optional
 internal_token         = "..."   # require Authorization: Bearer on the internal API
@@ -203,13 +207,15 @@ proof.json --directory <data_dir>/directory.json` checks it offline.
 | Force a timestamp anchor | `POST /admin/v1/anchor` |
 | Force a directory refresh | `POST /admin/v1/directory/refresh` |
 | Revoke a member | `zroad-cli member-revoke …` (final) |
-| See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token … --subject 2000123456` |
+| See who looked up a subject | `zroad-cli access-log --security-server http://127.0.0.1:7002 --admin-token <auditor token> --subject 2000123456` (auditor or higher; the lookup is recorded) |
 | Fetch a stored proof | `GET /admin/v1/proofs/<message_id>` |
 | Renew a certificate now | `POST /admin/v1/renew` on a running security server (automatic when under `renew_before_days`). Offline alternative: `zroad-cli renew --central … --dir … --san …`, then restart |
 | See what the network offers | `zroad-cli catalogue --central https://central.example.zw:8443 --ca ca.pem` (add `--schemas` to print the JSON Schemas) |
 | Republish your services now | `POST /admin/v1/catalogue/publish` |
+| Add an operator | `zroad-cli operator-token --name alice --role operator`, add the printed `[[operators]]` entry, restart (central: `central-server operator-add`, no restart) |
+| Let a citizen portal in | role `portal` token plus `[[citizen_assertion_keys]]`; see [access-control.md](access-control.md) |
 | Check certificate expiry | `GET /admin/v1/identity` (a warning is also logged under 30 days) |
-| Demo citizen page | `citizen-portal --security-server http://127.0.0.1:7002 --admin-token … --directory <data_dir>/directory.json` (demo only: it does not authenticate citizens) |
+| Demo citizen page | `citizen-portal --security-server … --portal-token … --provider ZW/GOV/ZIMRA --demo-idp-key idp.key` (demo only: the demo key lets it vouch for anyone) |
 
 ### What to back up
 

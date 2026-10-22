@@ -167,6 +167,8 @@ pub struct AppState {
     pub rate: Mutex<HashMap<String, (u64, u32)>>,
     pub subject_key: Vec<u8>,
     pub outbox: Outbox,
+    pub auth: zroad_core::auth::Authenticator,
+    pub citizen_issuers: Vec<zroad_core::citizen::TrustedIssuer>,
     /// This member's own services' schemas, by `subsystem/service/version`.
     pub schemas: HashMap<String, ServiceSchemas>,
     pub proofs_dir: PathBuf,

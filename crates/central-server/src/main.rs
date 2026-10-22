@@ -20,6 +20,27 @@ enum Cmd {
         #[arg(long = "san", required = true)]
         sans: Vec<String>,
     },
+    /// Add a named operator with a role (operator or admin; auditor is read-only)
+    /// and print their token once.
+    OperatorAdd {
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+        /// auditor, operator (add members) or admin (also revoke members).
+        #[arg(long)]
+        role: String,
+    },
+    OperatorRemove {
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+    },
+    OperatorList {
+        #[arg(long)]
+        dir: PathBuf,
+    },
     /// Serve the directory and enrolment API.
     Run {
         #[arg(long)]
@@ -45,6 +66,21 @@ async fn main() -> Result<()> {
                 dir.display()
             );
             println!("admin token is in {}/admin_token", dir.display());
+        }
+        Cmd::OperatorAdd { dir, name, role } => {
+            let role = role.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let token = central_server::add_operator(&dir, &name, role)?;
+            println!("{token}");
+            eprintln!("operator `{name}` added. This token is shown once; store it safely.");
+        }
+        Cmd::OperatorRemove { dir, name } => {
+            central_server::remove_operator(&dir, &name)?;
+            println!("removed {name}");
+        }
+        Cmd::OperatorList { dir } => {
+            for o in central_server::list_operators(&dir)? {
+                println!("{}\t{}", o.name, o.role.as_str());
+            }
         }
         Cmd::Run { dir, listen } => {
             let h = central_server::spawn(&dir, &listen).await?;

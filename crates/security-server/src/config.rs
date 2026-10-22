@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
+use zroad_core::auth::{Authenticator, OperatorEntry, Role};
+use zroad_core::citizen::TrustedIssuer;
 use zroad_core::id::{client_matches, MemberId};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -27,6 +29,13 @@ pub struct ServiceConfig {
     /// log a warning).
     #[serde(default)]
     pub enforce_response_schema: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CitizenKeyConfig {
+    pub name: String,
+    /// Base64 of the raw 32-byte Ed25519 public key (`zroad-cli citizen-key`).
+    pub public_key_b64: String,
 }
 
 /// A member that keeps its own signing key on its own machine (see the
@@ -83,7 +92,18 @@ pub struct Config {
     /// Address of the plain-HTTP listener for this organisation's own systems.
     /// Bind it to localhost or a private interface only.
     pub internal_listen: String,
+    /// The original single admin credential. Still accepted, as the `admin`
+    /// operator `legacy-admin`; prefer `operators`.
+    #[serde(default)]
     pub admin_token: String,
+    /// Named operators with roles; each has their own token (store only its
+    /// SHA-256, see `zroad-cli operator-token`).
+    #[serde(default)]
+    pub operators: Vec<OperatorEntry>,
+    /// Systems trusted to authenticate citizens for the citizen access-log
+    /// endpoint. Each is an Ed25519 public key.
+    #[serde(default)]
+    pub citizen_assertion_keys: Vec<CitizenKeyConfig>,
     #[serde(default)]
     pub internal_token: Option<String>,
     #[serde(default = "d_tsa")]
@@ -136,9 +156,14 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.admin_token.len() < 16 {
+        if !self.admin_token.is_empty() && self.admin_token.len() < 16 {
             bail!("admin_token must be at least 16 characters");
         }
+        self.authenticator()?;
+        if self.authenticator()?.is_empty() {
+            bail!("configure at least one operator (or the legacy admin_token)");
+        }
+        self.citizen_issuers()?;
         if self.remote_signer.is_some() && self.node_identity_dir.is_none() {
             bail!("a remote-signed member needs the node's identity (node_identity_dir)");
         }
@@ -167,6 +192,38 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// The operators allowed to use the administrative endpoints.
+    pub fn authenticator(&self) -> Result<Authenticator> {
+        Ok(Authenticator::new(self.operators.clone())
+            .map_err(|e| anyhow!("{e}"))?
+            .with_legacy_admin(Some(self.admin_token.as_str())))
+    }
+
+    pub fn citizen_issuers(&self) -> Result<Vec<TrustedIssuer>> {
+        let mut out: Vec<TrustedIssuer> = Vec::new();
+        for k in &self.citizen_assertion_keys {
+            let key = zroad_core::msg::b64_decode(&k.public_key_b64)
+                .map_err(|e| anyhow!("citizen key `{}`: {e}", k.name))?;
+            if key.len() != 32 {
+                bail!(
+                    "citizen key `{}` must be a 32-byte Ed25519 public key",
+                    k.name
+                );
+            }
+            if out.iter().any(|i| i.name == k.name) {
+                bail!("citizen key `{}` is listed twice", k.name);
+            }
+            out.push(TrustedIssuer {
+                name: k.name.clone(),
+                public_key: key,
+            });
+        }
+        if self.operators.iter().any(|o| o.role == Role::Portal) && out.is_empty() {
+            bail!("a portal operator is configured but no citizen_assertion_keys: the citizen endpoint could never answer");
+        }
+        Ok(out)
     }
 
     pub fn upstream_for(&self, local_key: &str) -> Option<&str> {
@@ -239,7 +296,12 @@ struct NodeFile {
 struct NodeMember {
     member_id: MemberId,
     data_dir: PathBuf,
+    #[serde(default)]
     admin_token: String,
+    #[serde(default)]
+    operators: Vec<OperatorEntry>,
+    #[serde(default)]
+    citizen_assertion_keys: Vec<CitizenKeyConfig>,
     #[serde(default)]
     internal_token: Option<String>,
     #[serde(default)]
@@ -317,6 +379,8 @@ impl NodeConfig {
                 network_listen: f.network_listen.clone(),
                 internal_listen: f.internal_listen.clone(),
                 admin_token: m.admin_token.clone(),
+                operators: m.operators.clone(),
+                citizen_assertion_keys: m.citizen_assertion_keys.clone(),
                 internal_token: m.internal_token.clone(),
                 tsa_member: f.tsa_member.clone(),
                 directory_refresh_secs: f.directory_refresh_secs,
@@ -347,7 +411,7 @@ impl NodeConfig {
                         b.member_id
                     );
                 }
-                if a.admin_token == b.admin_token {
+                if !a.admin_token.is_empty() && a.admin_token == b.admin_token {
                     bail!(
                         "members {} and {} share an admin_token",
                         a.member_id,

@@ -13,7 +13,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${1:-/tmp/zroad-demo}"
 BIN="$ROOT/target/debug"
-ADMIN_TOKEN="demo-admin-token-change-me"
 
 cargo build --manifest-path "$ROOT/Cargo.toml" --workspace --quiet
 
@@ -45,6 +44,14 @@ enroll ZW/SYS/tsa      "Timestamp Authority" 8445 "$WORK/tsa"
 enroll ZW/GOV/ZIMRA    "ZIMRA"               7443 "$WORK/zimra"
 enroll ZW/COM/12345678 "Example Buyer (Pvt)" 7444 "$WORK/buyer"
 
+# Operators have their own tokens and roles; the config keeps only each token's hash.
+mkop() { # name role config-file  -> prints the token
+  local tok
+  tok=$("$CLI" operator-token --name "$1" --role "$2" 2>"$WORK/op-$1.snippet")
+  { echo; grep -v '^#' "$WORK/op-$1.snippet"; } >>"$3"
+  echo "$tok"
+}
+
 echo "==> starting services"
 bg "$BIN/timestamp-service" --dir "$WORK/tsa" --listen 127.0.0.1:8445
 bg "$BIN/zimra-clearance" --listen 127.0.0.1:9001
@@ -55,7 +62,6 @@ data_dir = "zimra"
 central_url = "$CENTRAL"
 network_listen = "127.0.0.1:7443"
 internal_listen = "127.0.0.1:7002"
-admin_token = "$ADMIN_TOKEN"
 anchor_interval_secs = 5
 
 [[services]]
@@ -71,15 +77,20 @@ description = "Is this TIN cleared? Returns status and expiry only."
 service = "tax-clearance/verify/v1"
 allow = ["ZW/COM/*"]
 EOF
+# ZIMRA: an auditor, and a citizen portal that may only ask on behalf of a logged-in citizen
+AUDITOR_TOKEN=$(mkop zimra-auditor auditor "$WORK/zimra.toml")
+PORTAL_TOKEN=$(mkop citizen-portal portal "$WORK/zimra.toml")
+"$CLI" citizen-key --out "$WORK/idp.key" --name zimra-login >"$WORK/idp.snippet"
+{ echo; cat "$WORK/idp.snippet" | grep -v "^private key"; } >>"$WORK/zimra.toml"
 cat >"$WORK/buyer.toml" <<EOF
 member_id = "ZW/COM/12345678"
 data_dir = "buyer"
 central_url = "$CENTRAL"
 network_listen = "127.0.0.1:7444"
 internal_listen = "127.0.0.1:7001"
-admin_token = "$ADMIN_TOKEN"
 anchor_interval_secs = 5
 EOF
+mkop buyer-admin admin "$WORK/buyer.toml" >/dev/null
 bg "$BIN/security-server" run --config "$WORK/zimra.toml"
 bg "$BIN/security-server" run --config "$WORK/buyer.toml"
 for port in 7001 7002; do
@@ -110,10 +121,11 @@ echo "==> verifying the signed proof offline"
 "$CLI" proof-verify --proof "$WORK/proof.json" --directory "$WORK/buyer/directory.json"
 echo
 echo "==> who has looked up TIN 2000123456? (the citizen's view, from ZIMRA's log)"
-"$CLI" access-log --security-server http://127.0.0.1:7002 --admin-token "$ADMIN_TOKEN" --subject 2000123456 | python3 -m json.tool 2>/dev/null || true
+"$CLI" access-log --security-server http://127.0.0.1:7002 --admin-token "$AUDITOR_TOKEN" --subject 2000123456 | python3 -m json.tool 2>/dev/null || true
 echo
 echo "==> citizen portal demo: open http://127.0.0.1:9100 and enter 2000123456 (running until this script ends)"
-bg "$BIN/citizen-portal" --security-server http://127.0.0.1:7002 --admin-token "$ADMIN_TOKEN" --directory "$WORK/zimra/directory.json"
+bg "$BIN/citizen-portal" --security-server http://127.0.0.1:7002 --portal-token "$PORTAL_TOKEN" \
+   --provider ZW/GOV/ZIMRA --demo-idp-key "$WORK/idp.key" --directory "$WORK/zimra/directory.json"
 sleep 1
 curl -s "http://127.0.0.1:9100/?subject=2000123456" | grep -o "<td>[^<]*</td>" | head -4 || true
 echo

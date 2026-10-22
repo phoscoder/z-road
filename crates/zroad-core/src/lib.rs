@@ -1,6 +1,8 @@
 //! Protocol types and cryptographic helpers shared by every Z-Road component.
 
 pub mod audit;
+pub mod auth;
+pub mod citizen;
 pub mod crypto;
 pub mod directory;
 pub mod error;

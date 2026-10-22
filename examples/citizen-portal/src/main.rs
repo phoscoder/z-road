@@ -1,10 +1,16 @@
 //! A demo "who has looked at my data?" page.
 //!
-//! It asks a provider's security server which members queried a given data
-//! subject and shows the answer. **Demo only:** a real portal must first
-//! authenticate the citizen (for example with a national digital ID) and only
-//! ever query for the subject that person proved they are. Here anyone can type
-//! any identifier.
+//! The portal never chooses whose record to read. It forwards a signed **citizen
+//! identity assertion** (issued by whatever system really logged the person in)
+//! to the provider's security server together with its own `portal` token, and the
+//! security server answers only for the identifier inside the assertion.
+//!
+//! In production the assertion arrives with the logged-in citizen: pass it as
+//! `?assertion=...` (for example after a redirect from the login system).
+//!
+//! **Demo only:** with `--demo-idp-key` this program plays the login system
+//! itself and issues an assertion for whatever identifier is typed, *without
+//! authenticating anyone*. That is exactly what a real deployment must never do.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,16 +25,27 @@ use axum::Router;
 use bytes::Bytes;
 use clap::Parser;
 use serde::Deserialize;
+use zroad_core::citizen::{self, Assertion};
+use zroad_core::crypto::SoftwareSigner;
 use zroad_core::directory::Directory;
+use zroad_core::id::MemberId;
 
 #[derive(Parser)]
 struct Cli {
     /// Internal URL of the provider's security server.
     #[arg(long, default_value = "http://127.0.0.1:7002")]
     security_server: String,
-    /// Admin token of that security server (or set ZROAD_ADMIN_TOKEN).
-    #[arg(long, env = "ZROAD_ADMIN_TOKEN")]
-    admin_token: String,
+    /// This portal's token (role `portal`) on that security server (or set
+    /// ZROAD_PORTAL_TOKEN).
+    #[arg(long, env = "ZROAD_PORTAL_TOKEN")]
+    portal_token: String,
+    /// The provider this portal is for, e.g. ZW/GOV/ZIMRA (the assertion audience).
+    #[arg(long)]
+    provider: MemberId,
+    /// UNSAFE DEMO: a key file (see `zroad-cli citizen-key`) used to mint
+    /// assertions for any identifier typed in, without logging anyone in.
+    #[arg(long)]
+    demo_idp_key: Option<PathBuf>,
     /// Optional directory.json, used to show organisation names.
     #[arg(long)]
     directory: Option<PathBuf>,
@@ -39,12 +56,15 @@ struct Cli {
 struct App {
     ss: String,
     token: String,
+    provider: MemberId,
+    demo_idp: Option<SoftwareSigner>,
     names: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
 struct Params {
     subject: Option<String>,
+    assertion: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -98,26 +118,45 @@ fn page(body: &str) -> Html<String> {
         "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>\
          <title>Who looked at my data</title><style>{STYLE}</style><main>\
          <h1>Who looked at my data?</h1><p class=sub>Every lookup of your record by another organisation is logged.</p>\
-         <div class=banner><b>Demo only.</b> A real portal must verify who you are before showing anything. Here anyone can enter any identifier.</div>\
+         <div class=banner><b>Demo only.</b> A real portal shows records only for the person the login system vouched for. With the demo key, anyone can enter any identifier.</div>\
          <form method=get action=/><input name=subject placeholder='Your TIN or ID number' autofocus required>\
          <button>Check</button></form>{body}</main></html>"
     ))
 }
 
 async fn index(State(app): State<Arc<App>>, Query(p): Query<Params>) -> Html<String> {
-    let Some(subject) = p.subject.filter(|s| !s.trim().is_empty()) else {
-        return page("");
+    // Where does the proof of who this is come from?
+    let (assertion, subject) = match (&p.assertion, &p.subject, &app.demo_idp) {
+        (Some(a), _, _) => (a.clone(), String::from("your record")),
+        (None, Some(sub), Some(idp)) if !sub.trim().is_empty() => {
+            let now = zroad_core::now_ms();
+            let a = Assertion {
+                v: 1,
+                sub: sub.trim().to_string(),
+                aud: app.provider.clone(),
+                iat_ms: now,
+                exp_ms: now + 300_000,
+                jti: zroad_core::random_id(),
+            };
+            match citizen::issue(&a, idp) {
+                Ok(t) => (t, sub.trim().to_string()),
+                Err(e) => return page(&format!("<p class=err>{}</p>", esc(&e.to_string()))),
+            }
+        }
+        (None, Some(sub), None) if !sub.trim().is_empty() => {
+            return page("<p class=err>This portal has no login system attached. A citizen identity assertion is required.</p>");
+        }
+        _ => return page(""),
     };
-    let url = format!(
-        "{}/admin/v1/access-log?subject={}",
-        app.ss.trim_end_matches('/'),
-        urlencode(subject.trim())
-    );
+    let url = format!("{}/citizen/v1/access-log", app.ss.trim_end_matches('/'));
     let auth = format!("Bearer {}", app.token);
     let resp = zroad_net::request(
         "GET",
         &url,
-        &[("authorization", &auth)],
+        &[
+            ("authorization", &auth),
+            ("z-road-citizen-assertion", &assertion),
+        ],
         Bytes::new(),
         None,
         Duration::from_secs(10),
@@ -125,6 +164,9 @@ async fn index(State(app): State<Arc<App>>, Query(p): Query<Params>) -> Html<Str
     .await;
     let records: Vec<Record> = match resp {
         Ok(r) if r.status == 200 => serde_json::from_slice(&r.body).unwrap_or_default(),
+        Ok(r) if r.status == 401 => {
+            return page("<p class=err>The login could not be verified, so nothing is shown.</p>")
+        }
         Ok(r) => {
             return page(&format!(
                 "<p class=err>The security server answered {}.</p>",
@@ -168,18 +210,6 @@ async fn index(State(app): State<Arc<App>>, Query(p): Query<Params>) -> Html<Str
     ))
 }
 
-fn urlencode(s: &str) -> String {
-    s.bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect()
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -191,9 +221,18 @@ async fn main() -> Result<()> {
             .collect(),
         None => HashMap::new(),
     };
+    let demo_idp = match &cli.demo_idp_key {
+        Some(p) => Some(
+            SoftwareSigner::from_pkcs8_pem(&std::fs::read_to_string(p)?)
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        ),
+        None => None,
+    };
     let app = Arc::new(App {
         ss: cli.security_server,
-        token: cli.admin_token,
+        token: cli.portal_token,
+        provider: cli.provider,
+        demo_idp,
         names,
     });
     let listener = tokio::net::TcpListener::bind(&cli.listen).await?;
@@ -220,6 +259,5 @@ mod tests {
     #[test]
     fn escaping() {
         assert_eq!(esc("<b>\"x\"&'"), "&lt;b&gt;&quot;x&quot;&amp;&#39;");
-        assert_eq!(urlencode("a b&c"), "a%20b%26c");
     }
 }

@@ -43,6 +43,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "citizen"
+path = "fuzz_targets/citizen.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "schema"
 path = "fuzz_targets/schema.rs"
 test = false

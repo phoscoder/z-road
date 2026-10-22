@@ -726,7 +726,8 @@ async fn keeps_working_when_the_central_server_is_down_and_anchors_the_log() {
     assert_eq!(report.anchors.len(), 1);
     let tsa_key = member_key(&zimra.dir, "ZW/SYS/tsa");
     report.anchors[0].1.verify(&tsa_key).unwrap();
-    // nothing new since: a second anchor is a no-op
+    // the forced anchor is itself an administrative action and is recorded first,
+    // so there is always something new to anchor
     let r = zroad_net::request(
         "POST",
         &zimra.internal("/admin/v1/anchor"),
@@ -737,7 +738,11 @@ async fn keeps_working_when_the_central_server_is_down_and_anchors_the_log() {
     )
     .await
     .unwrap();
-    assert!(String::from_utf8_lossy(&r.body).contains("nothing new"));
+    assert_eq!(r.status, 200);
+    let again: Value = serde_json::from_slice(&r.body).unwrap();
+    assert!(again["anchor_seq"].is_u64(), "{again}");
+    let report = audit::verify_file(&zimra.dir.join("audit/log.jsonl")).unwrap();
+    assert_eq!(report.anchors.len(), 2);
 
     // The audit status endpoint agrees.
     let (_, st) = get_json(
@@ -1806,4 +1811,565 @@ async fn members_keep_their_own_keys_on_a_shared_node() {
         "{v}"
     );
     node.shutdown();
+}
+
+fn operator(
+    name: &str,
+    role: zroad_core::auth::Role,
+    token: &str,
+) -> zroad_core::auth::OperatorEntry {
+    zroad_core::auth::OperatorEntry {
+        name: name.into(),
+        role,
+        token_sha256: zroad_core::auth::hash_token(token),
+    }
+}
+
+async fn call_as(
+    method: &str,
+    url: &str,
+    token: Option<&str>,
+    extra: &[(&str, &str)],
+) -> (u16, Value) {
+    let auth = token.map(|t| format!("Bearer {t}"));
+    let mut h: Vec<(&str, &str)> = extra.to_vec();
+    if let Some(a) = &auth {
+        h.push(("authorization", a));
+    }
+    let r = zroad_net::request(method, url, &h, Bytes::new(), None, Duration::from_secs(20))
+        .await
+        .unwrap();
+    (
+        r.status,
+        serde_json::from_slice(&r.body).unwrap_or(Value::Null),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operators_have_roles_and_their_actions_are_recorded() {
+    use zroad_core::auth::Role;
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let idp = SoftwareSigner::from_pkcs8_pem(
+        &rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .unwrap()
+            .serialize_pem(),
+    )
+    .unwrap();
+
+    let mut cfg = net.config(&zimra, true);
+    cfg.operators = vec![
+        operator("alice", Role::Auditor, "tok-alice"),
+        operator("bob", Role::Operator, "tok-bob"),
+        operator("carol", Role::Admin, "tok-carol"),
+        operator("portal1", Role::Portal, "tok-portal"),
+    ];
+    cfg.citizen_assertion_keys = vec![security_server::config::CitizenKeyConfig {
+        name: "zimra-login".into(),
+        public_key_b64: b64_encode(&Signer::public_key(&idp)),
+    }];
+    // the original single credential keeps working, as the admin `legacy-admin`
+    cfg.admin_token = ADMIN.into();
+    let z = security_server::spawn(cfg.clone()).await.unwrap();
+    let url = |p: &str| zimra.internal(p);
+
+    // Unauthenticated and unknown tokens are refused, and guessing is slowed down.
+    assert_eq!(
+        call_as("GET", &url("/admin/v1/audit/status"), None, &[])
+            .await
+            .0,
+        401
+    );
+    let t = std::time::Instant::now();
+    assert_eq!(
+        call_as("GET", &url("/admin/v1/audit/status"), Some("guess"), &[])
+            .await
+            .0,
+        401
+    );
+    assert!(
+        t.elapsed() >= Duration::from_millis(250),
+        "failed logins are delayed"
+    );
+
+    // Auditor: read-only.
+    assert_eq!(
+        call_as(
+            "GET",
+            &url("/admin/v1/audit/status"),
+            Some("tok-alice"),
+            &[]
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        call_as("GET", &url("/admin/v1/identity"), Some("tok-alice"), &[])
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        call_as(
+            "GET",
+            &url("/admin/v1/access-log?subject=2000123456"),
+            Some("tok-alice"),
+            &[]
+        )
+        .await
+        .0,
+        200
+    );
+    for p in [
+        "/admin/v1/directory/refresh",
+        "/admin/v1/anchor",
+        "/admin/v1/renew",
+        "/admin/v1/catalogue/publish",
+    ] {
+        assert_eq!(
+            call_as("POST", &url(p), Some("tok-alice"), &[]).await.0,
+            403,
+            "{p}"
+        );
+    }
+
+    // Operator: may change state.
+    assert_eq!(
+        call_as(
+            "POST",
+            &url("/admin/v1/directory/refresh"),
+            Some("tok-bob"),
+            &[]
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        call_as("POST", &url("/admin/v1/anchor"), Some("tok-bob"), &[])
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        call_as("GET", &url("/admin/v1/audit/status"), Some("tok-bob"), &[])
+            .await
+            .0,
+        200
+    );
+
+    // Admin and the legacy credential: everything.
+    assert_eq!(
+        call_as(
+            "POST",
+            &url("/admin/v1/catalogue/publish"),
+            Some("tok-carol"),
+            &[]
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        call_as(
+            "POST",
+            &url("/admin/v1/directory/refresh"),
+            Some(ADMIN),
+            &[]
+        )
+        .await
+        .0,
+        200
+    );
+
+    // The portal role is a separate lane: nothing administrative.
+    for (m, p) in [
+        ("GET", "/admin/v1/audit/status"),
+        ("GET", "/admin/v1/access-log?subject=1"),
+        ("POST", "/admin/v1/directory/refresh"),
+    ] {
+        assert_eq!(
+            call_as(m, &url(p), Some("tok-portal"), &[]).await.0,
+            403,
+            "{p}"
+        );
+    }
+    // ... and without an assertion it cannot read anyone's record either.
+    let (s, v) = call_as(
+        "GET",
+        &url("/citizen/v1/access-log"),
+        Some("tok-portal"),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (401, "citizen_assertion_required")
+    );
+    // Admins and auditors are not portals.
+    assert_eq!(
+        call_as(
+            "GET",
+            &url("/citizen/v1/access-log"),
+            Some("tok-carol"),
+            &[]
+        )
+        .await
+        .0,
+        403
+    );
+
+    // Every privileged action is on the record, with who did it; refusals are not
+    // actions. The subject is never in the log in clear.
+    let log = std::fs::read_to_string(zimra.dir.join("audit/log.jsonl")).unwrap();
+    let admin_events: Vec<(String, String)> =
+        audit::read_entries(&zimra.dir.join("audit/log.jsonl"))
+            .unwrap()
+            .into_iter()
+            .filter_map(|e| match e.event {
+                audit::AuditEvent::Admin {
+                    operator, action, ..
+                } => Some((operator, action)),
+                _ => None,
+            })
+            .collect();
+    for want in [
+        ("alice", "access_log_lookup"),
+        ("bob", "directory_refresh"),
+        ("bob", "anchor"),
+        ("carol", "catalogue_publish"),
+        ("legacy-admin", "directory_refresh"),
+    ] {
+        assert!(
+            admin_events.contains(&(want.0.to_string(), want.1.to_string())),
+            "{want:?} missing in {admin_events:?}"
+        );
+    }
+    assert!(
+        !admin_events
+            .iter()
+            .any(|(who, a)| who == "alice" && a == "anchor"),
+        "refused attempts are not recorded as actions"
+    );
+    assert!(!log.contains("2000123456"));
+    audit::verify_file(&zimra.dir.join("audit/log.jsonl")).unwrap();
+
+    // Fail closed: an action that cannot be recorded is not performed.
+    z.state.audit.inject_write_failure_after(0);
+    let (s, v) = call_as(
+        "POST",
+        &url("/admin/v1/directory/refresh"),
+        Some("tok-bob"),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"].as_str().unwrap()),
+        (503, "audit_unavailable")
+    );
+    z.state.audit.clear_write_failure();
+    z.shutdown();
+
+    // Bad configuration is refused at startup.
+    let mut dup = cfg.clone();
+    dup.operators
+        .push(operator("alice", Role::Admin, "another"));
+    assert!(
+        security_server::spawn(dup).await.is_err(),
+        "duplicate operator name"
+    );
+    let mut no_keys = cfg.clone();
+    no_keys.citizen_assertion_keys.clear();
+    assert!(
+        security_server::spawn(no_keys).await.is_err(),
+        "portal without any citizen key"
+    );
+    let mut nobody = cfg;
+    nobody.operators.clear();
+    nobody.admin_token.clear();
+    assert!(
+        security_server::spawn(nobody).await.is_err(),
+        "no way to administer"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn citizens_can_only_see_their_own_record() {
+    use zroad_core::auth::Role;
+    use zroad_core::citizen::{issue, Assertion};
+    let net = Net::start().await;
+    let zimra = net.member("ZW/GOV/ZIMRA").await;
+    let buyer = net.member("ZW/COM/12345678").await;
+    let new_key = || {
+        SoftwareSigner::from_pkcs8_pem(
+            &rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+                .unwrap()
+                .serialize_pem(),
+        )
+        .unwrap()
+    };
+    let (idp, rogue) = (new_key(), new_key());
+
+    let mut cfg = net.config(&zimra, true);
+    cfg.operators = vec![
+        operator("portal1", Role::Portal, "tok-portal"),
+        operator("alice", Role::Auditor, "tok-alice"),
+    ];
+    cfg.citizen_assertion_keys = vec![security_server::config::CitizenKeyConfig {
+        name: "zimra-login".into(),
+        public_key_b64: b64_encode(&Signer::public_key(&idp)),
+    }];
+    let _z = security_server::spawn(cfg).await.unwrap();
+    let _b = net.run(&buyer, false).await;
+
+    // Two different people are looked up, one of them twice.
+    for tin in ["2000123456", "2000123456", "2000987654"] {
+        assert_eq!(clearance(&buyer, "ZW/COM/12345678/ap", tin).await.0, 200);
+    }
+
+    let aud: MemberId = "ZW/GOV/ZIMRA".parse().unwrap();
+    let assertion = |sub: &str, aud: &MemberId, iat: u64, ttl: u64, key: &SoftwareSigner| {
+        issue(
+            &Assertion {
+                v: 1,
+                sub: sub.into(),
+                aud: aud.clone(),
+                iat_ms: iat,
+                exp_ms: iat + ttl,
+                jti: random_id(),
+            },
+            key,
+        )
+        .unwrap()
+    };
+    let now = now_ms();
+    let portal = |token: &str, assertion: &str, query: &str| {
+        let url = zimra.internal(&format!("/citizen/v1/access-log{query}"));
+        let (token, assertion) = (token.to_string(), assertion.to_string());
+        async move {
+            call_as(
+                "GET",
+                &url,
+                Some(&token),
+                &[("z-road-citizen-assertion", &assertion)],
+            )
+            .await
+        }
+    };
+
+    // Each person sees exactly their own lookups, and only the fields a citizen needs.
+    let (s, mine) = portal(
+        "tok-portal",
+        &assertion("2000123456", &aud, now, 300_000, &idp),
+        "",
+    )
+    .await;
+    assert_eq!(s, 200, "{mine}");
+    assert_eq!(mine.as_array().unwrap().len(), 2);
+    let first = mine[0].as_object().unwrap();
+    assert_eq!(first["accessed_by"], "ZW/COM/12345678");
+    assert!(
+        first.get("client").is_none() && first.get("message_id").is_none(),
+        "internal details are not shown: {first:?}"
+    );
+    let (_, theirs) = portal(
+        "tok-portal",
+        &assertion("2000987654", &aud, now, 300_000, &idp),
+        "",
+    )
+    .await;
+    assert_eq!(theirs.as_array().unwrap().len(), 1);
+    let (_, nobody) = portal(
+        "tok-portal",
+        &assertion("2000555111", &aud, now, 300_000, &idp),
+        "",
+    )
+    .await;
+    assert_eq!(nobody.as_array().unwrap().len(), 0);
+
+    // The portal cannot steer the lookup: a subject parameter is ignored.
+    let good = assertion("2000123456", &aud, now, 300_000, &idp);
+    let (_, steered) = portal("tok-portal", &good, "?subject=2000987654&limit=1").await;
+    assert_eq!(
+        steered.as_array().unwrap().len(),
+        1,
+        "limit applies, subject is ignored"
+    );
+    assert_eq!(steered[0]["accessed_by"], "ZW/COM/12345678");
+    let (_, again) = portal("tok-portal", &good, "?subject=2000987654").await;
+    assert_eq!(
+        again.as_array().unwrap().len(),
+        2,
+        "still the asserting person's two lookups"
+    );
+
+    // Anything wrong with the proof of identity is refused.
+    let bad: Vec<(&str, String)> = vec![
+        (
+            "signed by an unknown issuer",
+            assertion("2000123456", &aud, now, 300_000, &rogue),
+        ),
+        (
+            "meant for another provider",
+            assertion(
+                "2000123456",
+                &"ZW/GOV/OTHER".parse().unwrap(),
+                now,
+                300_000,
+                &idp,
+            ),
+        ),
+        (
+            "expired",
+            assertion("2000123456", &aud, now - 700_000, 300_000, &idp),
+        ),
+        (
+            "lifetime too long",
+            assertion("2000123456", &aud, now, 3_600_000, &idp),
+        ),
+        ("not an assertion", "not-an-assertion".into()),
+    ];
+    for (why, token) in &bad {
+        let (s, v) = portal("tok-portal", token, "").await;
+        assert_eq!(
+            (s, v["error"].as_str().unwrap()),
+            (401, "invalid_citizen_assertion"),
+            "{why}: {v}"
+        );
+    }
+    // A forged subject breaks the signature.
+    let (p, sig) = good.split_once('.').unwrap();
+    let forged = String::from_utf8(b64_decode(p).unwrap())
+        .unwrap()
+        .replace("2000123456", "2000987654");
+    let (s, _) = portal(
+        "tok-portal",
+        &format!("{}.{sig}", b64_encode(forged.as_bytes())),
+        "",
+    )
+    .await;
+    assert_eq!(s, 401);
+    // Only a portal token may use the endpoint.
+    assert_eq!(portal("tok-alice", &good, "").await.0, 403);
+    assert_eq!(portal("wrong", &good, "").await.0, 401);
+
+    // The lookups are themselves recorded, with a keyed hash of the subject, never the subject.
+    let entries = audit::read_entries(&zimra.dir.join("audit/log.jsonl")).unwrap();
+    let lookups: Vec<String> = entries
+        .iter()
+        .filter_map(|e| match &e.event {
+            audit::AuditEvent::Admin {
+                operator,
+                action,
+                detail,
+                ..
+            } if action == "citizen_access_log" && operator == "portal1" => detail.clone(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        lookups.len(),
+        5,
+        "only answered lookups are recorded: {lookups:?}"
+    );
+    assert!(lookups
+        .iter()
+        .all(|d| d.contains("subject_ref=") && d.contains("issuer=zimra-login")));
+    assert!(!std::fs::read_to_string(zimra.dir.join("audit/log.jsonl"))
+        .unwrap()
+        .contains("2000987654"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn central_server_operators_have_roles() {
+    use zroad_core::auth::Role;
+    let net = Net::start().await;
+    let cdir = net.tmp.path().join("central");
+    let reg = central_server::add_operator(&cdir, "registrar", Role::Operator).unwrap();
+    let boss = central_server::add_operator(&cdir, "boss", Role::Admin).unwrap();
+    let watcher = central_server::add_operator(&cdir, "watcher", Role::Auditor).unwrap();
+    assert!(
+        central_server::add_operator(&cdir, "boss", Role::Admin).is_err(),
+        "names are unique"
+    );
+    assert!(
+        central_server::add_operator(&cdir, "p", Role::Portal).is_err(),
+        "no portal role here"
+    );
+
+    let c = CentralClient::new(&net.central_url, &net.ca_pem).unwrap();
+    let m: MemberId = "ZW/COM/12345678".parse().unwrap();
+    let err = |e: anyhow::Error| e.to_string();
+
+    // An operator can register members but not revoke them; an auditor can do neither.
+    assert!(c
+        .add_member(&watcher, &m, "x", "https://127.0.0.1:1")
+        .await
+        .map_err(err)
+        .unwrap_err()
+        .contains("403"));
+    assert!(c
+        .add_member("guess", &m, "x", "https://127.0.0.1:1")
+        .await
+        .map_err(err)
+        .unwrap_err()
+        .contains("401"));
+    c.add_member(&reg, &m, "Acme", "https://127.0.0.1:1")
+        .await
+        .unwrap();
+    assert!(c
+        .revoke(&reg, &m)
+        .await
+        .map_err(err)
+        .unwrap_err()
+        .contains("403"));
+    c.revoke(&boss, &m).await.unwrap();
+    // The original admin token keeps working as an admin.
+    c.add_member(
+        &net.admin_token,
+        &"ZW/COM/99999999".parse().unwrap(),
+        "Other",
+        "https://127.0.0.1:2",
+    )
+    .await
+    .unwrap();
+
+    // Removing an operator takes effect immediately, without a restart.
+    central_server::remove_operator(&cdir, "registrar").unwrap();
+    assert!(c
+        .add_member(
+            &reg,
+            &"ZW/COM/88888888".parse().unwrap(),
+            "Z",
+            "https://127.0.0.1:3"
+        )
+        .await
+        .map_err(err)
+        .unwrap_err()
+        .contains("401"));
+    assert!(central_server::remove_operator(&cdir, "registrar").is_err());
+
+    // Who did what is on the central server's own tamper-evident record.
+    let entries = audit::read_entries(&cdir.join("audit/log.jsonl")).unwrap();
+    let actions: Vec<(String, String)> = entries
+        .into_iter()
+        .filter_map(|e| match e.event {
+            audit::AuditEvent::Admin {
+                operator, action, ..
+            } => Some((operator, action)),
+            _ => None,
+        })
+        .collect();
+    for want in [
+        ("registrar", "member_add"),
+        ("boss", "member_revoke"),
+        ("legacy-admin", "member_add"),
+    ] {
+        assert!(
+            actions.contains(&(want.0.into(), want.1.into())),
+            "{want:?} missing in {actions:?}"
+        );
+    }
+    audit::verify_file(&cdir.join("audit/log.jsonl")).unwrap();
 }
